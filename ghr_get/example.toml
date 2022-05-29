@@ -1,0 +1,6 @@
+
+[exa]
+github = "ogham/exa"             # GitHub project
+release = "latest"               # or "pre", or a tag name
+asset = "*linux-x86_64-musl*"    # shell pattern to match on the name of the asset file that should be downloaded
+# folder =
