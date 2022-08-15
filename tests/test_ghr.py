@@ -1,8 +1,20 @@
-import unittest
+from ghr_get.ghr import GitHubProject
 
-class MyTestCase(unittest.TestCase):
-    def test_something(self):
-        self.assertEqual(True, False)  # add assertion here
 
-if __name__ == '__main__':
-    unittest.main()
+def test_ghr_project_short():
+    project = GitHubProject('rgburke/grv')
+    assert project.name == 'grv'
+    assert project.url == 'https://github.com/rgburke/grv'
+
+
+def test_ghr_project_full():
+    project = GitHubProject('https://github.com/rgburke/grv')
+    assert project.name == 'grv'
+    assert project.url == 'https://github.com/rgburke/grv'
+
+
+def test_ghr_project_subdir():
+    project = GitHubProject('https://github.com/rgburke/grv/releases/tag/v0.3.2')
+    assert project.name == 'grv'
+    assert project.url == 'https://github.com/rgburke/grv'
+
