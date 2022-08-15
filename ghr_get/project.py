@@ -125,7 +125,7 @@ class Installable:
         else:
             logger.error('%s: %s could not be identified as an archive, not unpacked.', self, self.source)
 
-        project_directory = self.project.directory.resolve()
+        project_directory = self.project.directory.resolve()    # type:ignore
         return [(path / member).resolve().relative_to(project_directory) for member in member_names]
 
     def delete(self, arg=None):
@@ -141,7 +141,7 @@ class Installable:
               project.
             - The files from the filtered list are deleted and removed from the cache.
         """
-        with self.project.directory() as project_directory:
+        with self.project.use_directory() as project_directory:
             if arg:
                 candidates = self._expand_arg(arg)
             elif self.source:
@@ -168,7 +168,7 @@ class Installable:
         return []
 
     def _expand_arg(self, arg):
-        with self.project.directory() as project_directory:
+        with self.project.directory as project_directory:
             arg_path = config.expand_path(arg, self.project.name)
             if arg_path.is_absolute():
                 candidates = [Path(p) for p in glob(fspath(arg_path))]
@@ -185,24 +185,32 @@ class Installable:
         self.project.register_installed_file(*files)
         return [files]
 
-    def _actions_from_mapping(self, spec: Mapping):
+    def _actions_from_mapping(self, action_specs: Mapping) -> list[Path]:
         """
-        Runs the actions from the given mapping. Returns new items. Assumes to be in the project directory.
+        Runs the actions from the given mapping. Assumes to be in the project directory.
+
+        Args:
+            action_specs: A mapping of the form {action: args, action: args}, i.e. already normalized
+
+        Returns:
+            a (possibly empty) list of paths that have been created by the action.
         """
         _no_config = object()
         new_sources = []
         for action in self.ACTIONS:
-            arg = spec.get(action, _no_config)
+            arg = action_specs.get(action, _no_config)
             if arg is not _no_config:
                 new_sources.extend(getattr(self, action)(arg))
-        for unknown_action in set(spec.keys()) - set(self.ACTIONS):
-            logger.warning('Skipping unknown install action %s=%s', unknown_action, spec[unknown_action])
-        logger.debug('Running %s for %s created new sources: %s', spec, self.source, new_sources)
+        for unknown_action in set(action_specs.keys()) - set(self.ACTIONS):
+            logger.warning('Skipping unknown install action %s=%s', unknown_action, action_specs[unknown_action])
+        logger.debug('Running %s for %s created new sources: %s', action_specs, self.source, new_sources)
         return new_sources
 
     def _run_actions(self, spec: Any):
         """
-        Runs the action(s) specified in spec and returns the list of new files.
+        Normalizes the action spec and runs _actions_from_mapping
+
+        This is intended to be called with the value of the 'install' key.
         """
         if isinstance(spec, Mapping) and any(k in self.ACTIONS for k in spec.keys()):
             return self._actions_from_mapping(spec)
@@ -212,7 +220,7 @@ class Installable:
             return self._actions_from_mapping({spec: None})
 
     def install(self, including_assets=True, check_extra_sources: Optional[list] = None):
-        with self.project.directory():
+        with self.project.directory:
             new_sources = []
             if check_extra_sources:
                 new_sources.extend(check_extra_sources)
@@ -220,15 +228,19 @@ class Installable:
                 for asset in self.project.get_assets():
                     asset.install()
             if hasattr(self, 'source') and self.source is not None:
-                new_sources.extend(self._run_actions(self.spec))
+                if 'install' in self.spec:
+                    logger.debug('Running install rule %s for %s', self.spec['install'], self.source)
+                    new_sources.extend(self._run_actions(self.spec['install']))
+                elif not new_sources:
+                    logger.warning('No install configuration in spec %s and no extra sources found', self.spec)
 
-        project_spec = self.project.config.get('install', {})
-        while new_sources:
-            source = new_sources.pop(0)
-            for pattern, spec in project_spec.items():
-                if fnmatch(source, pattern):
-                    logger.debug('Identified install rule %s=%s for %s', pattern, spec, source)
-                    new_sources.extend(Installable(self.project, source, spec)._run_actions(spec))
+            project_spec = self.project.config.get('install', {})
+            while new_sources:
+                source = new_sources.pop(0)
+                for pattern, spec in project_spec.items():
+                    if fnmatch(source, pattern):
+                        logger.debug('Identified install rule %s=%s for %s', pattern, spec, source)
+                        new_sources.extend(Installable(self.project, source, spec)._run_actions(spec))
 
 
 class GitHubProject(Installable):
@@ -285,18 +297,32 @@ class GitHubProject(Installable):
             self.user, self.repo = self.config['github'].split('/')
             self.config['url'] = f'https://github.com/{self.user}/{self.repo}'
 
-    @contextmanager
-    def directory(self) -> Generator[Path, None, None]:
+    @property
+    def directory(self):
         """
         Returns the project directory (usually ~/.local/share/$APP_NAME/$PROJECT_NAME). Guaranteed to exist.
         """
-        old_cwd = Path.cwd()
         if not self._directory:
             self._directory = config.project_directory(self.name)
             self._directory.mkdir(parents=True, exist_ok=True)
-        chdir(self._directory)
-        yield self._directory
+        return self._directory
+
+    @contextmanager
+    def use_directory(self):
+        """
+        work in self.directory.
+
+        Example:
+            with project.use_directory() as pd:
+                assert Path.cwd() == pd
+        """
+
+        old_cwd = Path.cwd()
+        chdir(self.directory)
+        yield self.directory
         chdir(old_cwd)
+
+        
 
     def update(self) -> bool:
         """
@@ -390,7 +416,7 @@ class GitHubProject(Installable):
                     if asset_needs_install:
                         asset.install()
                 except Exception as e:
-                    logger.exception('Failed to install %s for %s: %s', asset.file.name, self.name, e)
+                    logger.exception('Failed to install %s for %s: %s', asset.source.name, self.name, e)
         if needs_install:
             self.install()
 
@@ -432,7 +458,7 @@ class GitHubProject(Installable):
         from subprocess import run
         from tempfile import NamedTemporaryFile
 
-        with self.directory() as project_directory:
+        with self.directory as project_directory:
             if record_new_files is not None:
                 files_before = set(project_directory.glob('**/*'))
             else:
@@ -465,7 +491,7 @@ class GithubAsset(Installable):
     asset_desc: Mapping
     cache: MutableMapping
     needs_download: bool
-    file: Path
+    source: Path
 
     def __init__(self, project: GitHubProject, release: str, spec: MutableMapping | None, asset_desc: Mapping) -> None:
         """
@@ -479,7 +505,7 @@ class GithubAsset(Installable):
         self.release = release
         self.spec = spec
         self.asset_desc = asset_desc
-        self.file = config.project_directory(self.project.name) / self.asset_desc['name']
+        self.source = config.project_directory(self.project.name) / self.asset_desc['name']
 
     @property
     def configured(self):
@@ -520,11 +546,11 @@ class GithubAsset(Installable):
         with self.project.asset_cache:
             if force or self.needs_download:
                 updated = fetch_if_newer(self.asset_desc['url'], self.cache,
-                                         download_file=self.file,
+                                         download_file=self.source,
                                          headers={'Accept': 'application/octet-stream'},
                                          stream=True)
                 if updated:
-                    self.cache.setdefault('files', []).append(self.file.name)
+                    self.cache.setdefault('files', []).append(self.source.name)
                 return updated
             else:
                 return False

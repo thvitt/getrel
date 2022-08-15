@@ -72,7 +72,7 @@ def add(url: str):
     """
     Interactively install a tool and add its configuration.
     """
-    with edit_projects() as project_config:
+    with edit_projects() as settings:
         project = GitHubProject.from_url(url)
         project.update()
         if 'release' not in project.config:
@@ -104,12 +104,15 @@ def add(url: str):
         else:
             release_record = project.select_release()
 
+        logger.debug('Project config: %s', project.config)
+        logger.debug('Global settings:\n%s', settings)
+
         # now select the asset(s)
         asset_choices = [asset2choice(a) for a in project.get_assets(release=release_record, configured=False)]
         selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices).ask()
 
         for asset in selected_assets:
-            asset_name = asset.file.name
+            asset_name = asset.source.name
             console.rule(asset_name)
             asset_names = [a['name'] for a in release_record['assets']]
             try:
@@ -125,9 +128,9 @@ def add(url: str):
             asset.configure({'match': pattern})
             asset.download()
             # now let’s see what we got 
-            kind = FileType(asset.file)
+            kind = FileType(asset.source)
             if kind.executable:
-                if questionary.confirm(f'{asset.file.name} seems to be an executable ({kind.description}). '
+                if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
                         'Should I install it as binary {project.name}?').ask():
                     asset.configure({'install': 'bin'})
                 else:
@@ -135,7 +138,7 @@ def add(url: str):
                     if bin:
                         asset.configure({'install': {'bin': bin}})
             if not asset.spec.get('install') and kind.archive:
-                if questionary.confirm(f'{asset.file.name} is an archive ({kind.description}). '
+                if questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
                         'Should I unpack it?').ask():
                     asset.configure({'install': 'unpack'})
             if not asset.spec.get('install'):
@@ -144,7 +147,6 @@ def add(url: str):
                     asset.configure({'install': {'link': link}})
             logger.debug('Running install for spec %s', asset.spec)
             asset.install()
-    project_config.save()
 
 
 

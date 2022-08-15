@@ -3,6 +3,7 @@ from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import  Optional
 from contextlib import contextmanager
+from functools import lru_cache
 
 from tomlkit.toml_document import TOMLDocument
 import json
@@ -166,7 +167,7 @@ class JSONSettings(BaseSettings):
 
 
 
-
+@lru_cache
 def edit_projects() -> Settings:
     return Settings(xdg.xdg_config_home() / APP_NAME / 'projects.toml')
 
