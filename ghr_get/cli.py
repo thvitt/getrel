@@ -127,32 +127,37 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
         for asset in selected_assets:
             asset_name = asset.source.name
-            console.rule(asset_name)
             asset_names = [a['name'] for a in release_record['assets']]
             try:
                 pattern = identifying_pattern(asset_name, asset_names)
             except NoPatternError:
                 pattern = asset_name
 
-            pattern = questionary.text(f'Asset matching pattern', 
-                    default=pattern, 
-                    validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
-                    instruction=f'edit/accept pattern for {asset_name}').ask()
-            logger.info('Asset pattern: %s', pattern)
+            if detailed:
+                pattern = questionary.text(f'Asset matching pattern',
+                        default=pattern,
+                        validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
+                        instruction=f'edit/accept pattern for {asset_name}').ask()
+            else:
+                logger.info('Asset pattern for %s: %s', asset_name, pattern)
             asset.configure({'match': pattern})
             asset.download()
             # now let’s see what we got 
             kind = FileType(asset.source)
             if kind.executable:
-                if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
-                        'Should I install it as binary {project.name}?').ask():
-                    asset.configure({'install': 'bin'})
+                if detailed:
+                    if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
+                            'Should I install it as binary {project.name}?').ask():
+                        asset.configure({'install': 'bin'})
+                    else:
+                        bin = questionary.text('Use a different binary name?', instruction='Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
+                        if bin:
+                            asset.configure({'install': {'bin': bin}})
                 else:
-                    bin = questionary.text('Use a different binary name?', instruction='Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
-                    if bin:
-                        asset.configure({'install': {'bin': bin}})
+                    asset.configure({'install': 'bin'})
+                    logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, project.name)
             if not asset.spec.get('install') and kind.archive:
-                if questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
+                if not detailed or questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
                         'Should I unpack it?').ask():
                     asset.configure({'install': 'unpack'})
             if not asset.spec.get('install'):
