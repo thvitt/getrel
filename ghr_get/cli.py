@@ -81,21 +81,22 @@ def asset2choice(asset: GithubAsset) -> questionary.Choice:
 
 
 @app.command()
-def add(url: str):
+def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
+                                                help="ask even if we have a heuristic")):
     """
     Interactively install a tool and add its configuration.
     """
     with edit_projects() as settings:
-        project = GitHubProject.from_url(url)
+        project = get_project(url, must_exist=False)
         project.update()
         if 'release' not in project.config:
             special = dict(
-                latest = first((release for release in project.releases if not release['prerelease'] and not release['draft']), default=None),
-                pre = first((release for release in project.releases if not release['draft']), default=None))
+                latest = first((release for release in project.releases if not release.data['prerelease'] and not release.data['draft']), default=None),
+                pre = first((release for release in project.releases if not release.data['draft']), default=None))
             choices = []
             for label, release in special.items():
                 if release:
-                    choices.append(rel2choice(release, label))
+                    choices.append(rel2choice(release.data, label))
             choices.extend(rel2choice(r) for r in project.releases)
             selected = questionary.select('Which release would you like to use', choices, 
                                             use_arrow_keys=True, use_shortcuts=True).ask()
@@ -106,8 +107,8 @@ def add(url: str):
             else:
                 release_record = [p for p in project.releases if p['tag_name'] == selected][0]
                 try:
-                    pattern = identifying_pattern(selected, [r['tag_name'] for r in project.releases])
-                    if '*' in pattern:
+                    pattern = identifying_pattern(selected, [r.data['tag_name'] for r in project.releases])
+                    if detailed and '*' in pattern:
                         pattern = questionary.text(f'Release matching pattern', 
                                 default=pattern, 
                                 validate=FNMatchValidator([c.value for c in choices], must_match=selected)).ask()

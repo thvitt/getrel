@@ -9,13 +9,41 @@ import zipfile
 import tarfile
 
 from pathlib import Path
-from typing import Optional, Any, Generator
+from typing import Optional, Any
 
+from .config import BaseSettings
 from . import config
 from .utils import naturalsize, first, fetch_if_newer
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class Release(Mapping):
+    version: str
+    data: Mapping
+
+    def __str__(self):
+        return self.version
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
+
+
+class GitHubRelease(Release):
+
+    def __init__(self, release_record: Mapping):
+        self.data = release_record
+        self.version = release_record['tag_name']
 
 
 class Installable:
@@ -244,12 +272,146 @@ class Installable:
 
 
 class GitHubProject(Installable):
+    """
+    Properties:
+        name (str): Project name, key in the config file
+        config (Mapping): configured data about the project, project.toml[name], contains:
+            - url (str): url to project on github
+            - kind (str) = github
+            - release (str): which release(s) to choose
+            - assets (list[Mapping]): which files to download and what to do with them
+            - install (Mapping): additional installation rules
+            - post-install (str): additional installation script
+        directory (Path): ~/.local/share/getrel/<name>, here everything is downloaded / installed
+
+    States:
+        configured (bool): has config with at least url, release, assets and one install or post-install rule somewhere
+        updated: we do have cached release metadata and at least the following information:
+            - date of last metadata update
+            - latest release
+            - selected release
+            - probably information on the available assets
+        downloaded [updated]: assets have been downloaded for the release
+            - downloaded release
+            - assets
+        installed [downloaded]: install scripts have been run
+            - files to uninstall
+
+
+    Actions:
+        [implied actions are run if needed]
+        update: reads the release metadata from the server, may change state and available releases
+        download: downloads the assets [update]
+        install: runs the install and post-install rules on the downloaded assets [download]
+        uninstall: removes files except for assets
+        clear: uninstalls and then removes the project directory and state [uninstall]
+        
+
+    Additional Operations:
+
+    """
+
+    ## config -> use property config
+    name: str
+    _projects_config: Optional[BaseSettings] = None
+
+    @property
+    def config(self) -> MutableMapping:
+        if self._projects_config is None:
+            self._projects_config = config.edit_projects()
+        if self.name not in self._projects_config:
+            self.config = {}
+        return self._projects_config[self.name]
+
+    @config.setter
+    def config(self, value: Mapping):
+        if self._projects_config is None:
+            self._projects_config = config.edit_projects()
+        self._projects_config[self.name] = value
+
+    ## state
+
+    @property
+    def state(self) -> BaseSettings:
+        return config.edit_project_state(self.name)
+
+    def project_relative_fspath(self, orig: Path | str) -> str:
+        """
+        returns a string represantation that is relative to the project directory
+        or absolute, with symlinks resolved
+        """
+        orig_path = self.resolve_path(orig)
+        try:
+            rel_path = orig_path.relative_to(self.directory)
+        except ValueError:
+            rel_path = orig_path
+        return fspath(rel_path)
+
+    def resolve_path(self, orig: Path | str) -> Path:
+        """
+        Returns an absolute path, resolved against the project directory
+        """
+        with self.use_directory():
+            return Path(orig).resolve()
+
+    @property
+    def installed_files(self) -> list[str]:
+        """
+        The list of files installed by this project's install() routine.
+
+        TODO: proper Path and resolve() handling
+        """
+        return self.release_cache.setdefault('installed_files', [])
+
+    def register_installed_file(self, *files):
+        file_list = self.installed_files
+        for file in map(fspath, files):
+            if file not in file_list:
+                file_list.append(file)
+
+    def unregister_installed_file(self, *files):
+        for file in map(fspath, files):
+            if file in self.installed_files:
+                self.installed_files.remove(file)
+
+
     _directory: Optional[Path] = None
 
-    def __init__(self, name: str, project_config: dict):
-        self.name = name
-        self.config = project_config
-        self.augment_config()
+    def __init__(self, name: str, project_config: Optional[dict] = None):
+        """
+        Creates a new project.
+
+        Args:
+            name: Either the project's name or a GitHub URL or a user/repo string.
+        """
+        # The project needs a name before it can access its configuration. If project_config is given,
+        # or if the name string is a name from the projects list, we assume there's no magic needed,
+        # otherwise we try to parse the name string to identify the project URL.
+        projects = config.edit_projects()
+        if name not in projects and project_config is None:
+            if re.match('https?://', name):
+                user, repo = self.parse_github_url(name)
+            elif m := re.match(r'([^/\s]+)/([^/\s]+)', name):
+                user, repo = m.groups()
+            else:
+                raise ValueError(f'Project {name} needs an URL')
+            url = f'https://github.com/{user}/{repo}'
+            if repo in projects:
+                ex_config = projects[repo]
+                if 'url' in ex_config and ex_config['url'] != url:
+                    raise ValueError(f'Project {name} already exists with URL {projects.get("url")} instead of {url}. Please provide an explicit name.')
+            self.name = repo
+            self.config['url'] = url
+            self.config['kind'] = 'github'
+            self.repo = repo
+            self.user = user
+        else:
+            self.name = name
+            if project_config is not None and self.config != project_config:
+                logger.warning('Project %s: Overwriting previous config, %s, with new config %s', name, self.config, project_config)
+                self.config = project_config
+            self.user, self.repo = self.parse_github_url(self.config['url'])
+
         self.release_cache = config.JSONSettings(config.project_state_directory(self.name) / 'releases.json')
         self.asset_cache = config.JSONSettings(config.project_state_directory(self.name) / 'assets.json')
 
@@ -265,25 +427,6 @@ class GitHubProject(Installable):
             return m.group(1), m.group(2)
         else:
             raise ValueError(f'{url} is not the URL of a GitHub project')
-
-    @classmethod
-    def from_url(cls, url: str, name: str | None = None) -> 'GitHubProject':
-        """
-        Creates a project configuration from the given GitHub URL.
-
-        Returns:
-            a GitHubProject, which may be a new one. Note this automatically adds configuration 
-
-        Raises:
-            ValueError if the URL could not be parsed
-        """
-
-        user, repo = cls.parse_github_url(url)
-        if name is None:
-            name = repo
-        with config.edit_projects() as projects:
-            project_config = projects.setdefault(name, {'github': f'{user}/{repo}'})
-            return cls(name, project_config)
 
     def augment_config(self):
         if 'github' not in self.config and 'url' in self.config:
@@ -334,40 +477,40 @@ class GitHubProject(Installable):
             update_url += '/latest'
         with self.release_cache as cache:
             releases_updated = fetch_if_newer(update_url, cache,
-                                              json='application/vnd.github+json')  # type:ignore - will be bool
+                                              json='application/vnd.github+json')  # type:ignore # - will be bool
             if releases_updated:
                 selected_release = self.select_release()
                 if selected_release:
-                    cache['selected_release'] = selected_release['tag_name']
+                    cache['selected_release'] = selected_release.version
                     logger.info('%s: New release %s available', self.name, selected_release)
                     return True
                 else:
                     cache['selected_release'] = None
-                    logger.warn('%s: No release matching %s found.', self.name, release_config)
+                    logger.warning('%s: No release matching %s found.', self.name, release_config)
                     return False  # no release, no update
             else:
                 logger.debug('%s: Releases not updated.', self.name)
                 return False
 
     @property
-    def releases(self):
+    def releases(self) -> list[Release]:
         releases = self.release_cache.get('data')
         if isinstance(releases, Mapping):
-            return [releases]
+            return [GitHubRelease(releases)]
         else:
-            return sorted(releases, key=itemgetter('created_at'), reverse=True)  # type:ignore - if its not a list, its a mapping
+            return [GitHubRelease(r) for r in sorted(releases, key=itemgetter('created_at'), reverse=True)]  # type:ignore #- if its not a list, its a mapping
 
-    def select_release(self):
+    def select_release(self) -> Release:
         release_config = self.config.get('release', '')
         releases = self.releases
         if release_config == 'latest':
-            return first((release for release in releases if not release['prerelease'] and not release['draft']),
+            return first((release for release in releases if not release.data['prerelease'] and not release.data['draft']),
                          default=None)
         elif release_config == 'pre':
-            return first((release for release in releases if not release['draft']), default=None)
+            return first((release for release in releases if not release.data['draft']), default=None)
         else:
             return first((release for release in releases if
-                          fnmatch(release['tag_name'], release_config) and not release['draft']), default=None)
+                          fnmatch(release.version, release_config) and not release.data['draft']), default=None)
 
     def get_assets(self, release=None, configured=True) -> list['GithubAsset']:
         result = []
@@ -377,24 +520,26 @@ class GitHubProject(Installable):
             return result
         if configured:
             for spec in self.config['assets']:
-                matching_descs = [asset for asset in release['assets'] if fnmatch(asset['name'], spec['match'])]
+                matching_descs = [asset for asset in release.data['assets'] if fnmatch(asset['name'], spec['match'])]
                 if len(matching_descs) == 0:
-                    logger.warn('%s %s: No asset matching %s found', self.name, release['tag_name'], spec['match'])
+                    logger.warning('%s %s: No asset matching %s found', self.name, release, spec['match'])
                 else:
-                    result.append(GithubAsset(self, release['tag_name'], spec, matching_descs[0]))
+                    result.append(GithubAsset(self, release, spec, matching_descs[0]))
                     if len(matching_descs) > 1:
-                        logger.warn(
+                        logger.warning(
                             '%s %s: %d assets match %s (%s). This is not supported, arbitrarily using the first one.',
-                            self.name, release['tag_name'], len(matching_descs), spec,
+                            self.name, release, len(matching_descs), spec,
                             ', '.join(a['name'] for a in matching_descs))
         else:
-            for desc in release['assets']:
-                result.append(GithubAsset(self, release['tag_name'], None, desc))
+            for desc in release.data['assets']:
+                result.append(GithubAsset(self, release, None, desc))
         return result
 
     def configure_asset(self, asset: "GithubAsset"):
         """Adds or updates the configuration for the given asset in this project."""
-        assets = self.config.setdefault('assets', [])
+        if 'assets' not in self.config:
+            self.config['assets'] = []
+        assets = self.config['assets']
         assert asset.spec is not None, 'Cannot add an unconfigured asset'
         pattern = asset.spec['match']
         existing_spec = first((a for a in assets if a['match'] == pattern), default=None)
@@ -419,26 +564,6 @@ class GitHubProject(Installable):
                     logger.exception('Failed to install %s for %s: %s', asset.source.name, self.name, e)
         if needs_install:
             self.install()
-
-    @property
-    def installed_files(self) -> list[str]:
-        """
-        The list of files installed by this project's install() routine.
-
-        TODO: proper Path and resolve() handling 
-        """
-        return self.release_cache.setdefault('installed_files', [])
-
-    def register_installed_file(self, *files):
-        file_list = self.installed_files
-        for file in map(fspath, files):
-            if file not in file_list:
-                file_list.append(file)
-
-    def unregister_installed_file(self, *files):
-        for file in map(fspath, files):
-            if file in self.installed_files:
-                self.installed_files.remove(file)
 
     def exec_script(self, script: str, record_new_files: Optional[list] = None) -> int:
         """
@@ -493,7 +618,7 @@ class GithubAsset(Installable):
     needs_download: bool
     source: Path
 
-    def __init__(self, project: GitHubProject, release: str, spec: MutableMapping | None, asset_desc: Mapping) -> None:
+    def __init__(self, project: GitHubProject, release: Release, spec: MutableMapping | None, asset_desc: Mapping) -> None:
         """
         Each asset is associated with:
             - the current project
@@ -554,3 +679,23 @@ class GithubAsset(Installable):
                 return updated
             else:
                 return False
+
+
+def get_project(name: str, must_exist: bool = True) -> GitHubProject:      # TODO refactor
+    """
+    Returns an existing project
+    """
+    projects = config.edit_projects()
+    if name in projects:
+        return GitHubProject(name)
+    elif must_exist:
+        raise KeyError(f'Project {name} does not exist.')
+    else:
+        project = err = None
+        for cls in [GitHubProject]:
+            try:
+                project = cls(name)
+                return project
+            except Exception as e:
+                err = e
+        raise err
