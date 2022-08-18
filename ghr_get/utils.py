@@ -93,9 +93,21 @@ class FileType:
         elif is_tarfile(file) or is_zipfile(file):
             self.archive = True
         else:
-            with file.open() as f:
+            with file.open(errors='ignore') as f:
                 if f.read(2) == '#!':
                     self.executable = True
+
+    def __str__(self):
+        result = self.mime
+        app = []
+        if self.executable:
+            app.append('executable')
+        if self.archive:
+            app.append('archive')
+        if app:
+            result += f" ({' '.join(app)})"
+        return result
+
 
 
 def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | None = None, json: bool | str = False,
