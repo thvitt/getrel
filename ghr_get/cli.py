@@ -1,9 +1,15 @@
+import os
+import sys
+import shutil
+import subprocess
 from collections.abc import Mapping
-from typing import Collection, Optional
+from typing import Collection, Optional, List
 from prompt_toolkit.document import Document
 from prompt_toolkit.validation import ValidationError, Validator
 import typer
-from .project import GitHubProject, GithubAsset
+from rich.table import Table
+
+from .project import GitHubProject, GithubAsset, get_project
 import questionary
 from difflib import SequenceMatcher
 import fnmatch
@@ -20,12 +26,19 @@ import tomlkit
 console = Console()
 
 FORMAT = "%(message)s"
+log_handler = RichHandler(console=console, show_time=False, rich_tracebacks=False)
 logging.basicConfig(
-    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[RichHandler(console=console)]
+    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[log_handler]
 )
 logger = logging.getLogger(__name__)
+app = typer.Typer(pretty_exceptions_enable=False)
 
-app = typer.Typer()
+@app.callback()
+def initialize(verbose: int = typer.Option(0, '--verbose', '-v', count=True, help="more messages", show_default=False, show_choices=False),
+               quiet: int = typer.Option(0, '--quiet', '-q', count=True, help="less messages", show_default=False, show_choices=False)):
+    log_level = min(logging.CRITICAL, max(0, logging.WARNING + (10 * (quiet - verbose))))
+    log_handler.setLevel(log_level)
+
 
 class FNMatchValidator(Validator):
 
