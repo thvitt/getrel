@@ -166,15 +166,68 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                     asset.configure({'install': {'link': link}})
             logger.debug('Running install for spec %s', asset.spec)
             asset.install()
+    settings.save()
 
 
 
 @app.command('list')
-def list_():
+def list_(details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
+          config: bool = typer.Option(False, "-c", "--config", help="include configuration section")):
+    """
+    List the configured projects and their state.
+    """
     projects = edit_projects()
-    for name, project_config in projects.items():
-        console.print(Syntax(tomlkit.dumps({name: project_config}), 'toml'))
+    if details:
+        table = Table(box=None)
+        table.add_column('Project')
+        table.add_column('Installed')
+        table.add_column('Candidate')
+        table.add_column('Updated')
+        if config:
+            table.add_column('Config')
+        for name in projects:
+            try:
+                project = get_project(name)
+                cells = [name, '?', repr(project.select_release()), '?']
+                if config:
+                    cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
+                table.add_row(*cells)
+            except Exception as e:
+                logger.error('Project %s could not be created: %s (config: %s)', name, e, projects[name])
+        console.print(table)
+    else:
+        console.print("\n".join(name for name in projects))
 
+
+@app.command()
+def edit():
+    """
+    Edit the project configuration file.
+    """
+    editor = os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi'
+    editor_cmd = shutil.which(editor)
+    projects = edit_projects()
+    last_modified = projects.store.stat().st_mtime
+    subprocess.run([editor_cmd, os.fspath(projects.store)])
+    if projects.store.stat().st_mtime > last_modified:
+        projects.load()
+        list_()
+
+@app.command()
+def pd(project_name: str, command: List[str] = typer.Argument(None, help="Command to run in the project directory")):
+    """
+    Access the given project and run a command in its directory. If no command is given, just print the project directory.
+    """
+    try:
+        project = get_project(project_name, must_exist=True)
+        if not command:
+            console.print(os.fspath(project.directory))
+        else:
+                with project.use_directory():
+                    result = subprocess.run(command)
+                    sys.exit(result.returncode)
+    except Exception as e:
+        logger.error('Failed to run command %s for project %s: %s', ' '.join(command) or 'pd', project_name, e)
 
 class NoPatternError(ValueError):
     ...
@@ -185,7 +238,7 @@ def identifying_pattern(selection: str, alternatives: list[str]) -> str:
     Given a selection string and a set of alternatives, this function returns a version of selection 
     that replaces all substrings common to all the selection and all alternatives with a '*'. E.g.,
     
-    >>> get_pattern('foo-linux.tar.gz', ['foo-windows.tar.gz', 'foo-macos.tar.gz'])
+    >>> identifying_pattern('foo-linux.tar.gz', ['foo-windows.tar.gz', 'foo-macos.tar.gz'])
     '*linux*'
     """
     # collect common substrings (or rather, character indexes)

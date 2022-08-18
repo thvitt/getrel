@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
-from typing import  Optional
+from typing import Optional
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -19,6 +19,7 @@ APP_NAME = 'ghr-get'
 - ~/.config/{APP_NAME}/projects.toml  has 
 - ~/.local/{APP_NAME}/{project} is the project specific 
 """
+
 
 class BaseSettings(ABC, MutableMapping):
     """
@@ -47,15 +48,18 @@ class BaseSettings(ABC, MutableMapping):
 
     @staticmethod
     @abstractmethod
-    def dumps(data: MutableMapping) -> str: ...
+    def dumps(data: MutableMapping) -> str:
+        ...
 
     @staticmethod
     @abstractmethod
-    def loads(content: str) -> MutableMapping: ...
+    def loads(content: str) -> MutableMapping:
+        ...
 
     @staticmethod
     @abstractmethod
-    def new_data() -> MutableMapping: ...
+    def new_data() -> MutableMapping:
+        ...
 
     def load(self, file: Optional[Path] = None):
         if file is None:
@@ -79,7 +83,7 @@ class BaseSettings(ABC, MutableMapping):
             file.write_text(new_content)
             self.last_state = new_content
 
-    def __init__(self, file: Path | str, data: Mapping | None = None, save_on_error = True) -> None:
+    def __init__(self, file: Path | str, data: Mapping | None = None, save_on_error=True) -> None:
         """
         Create, load and initialize a new settings instance.
 
@@ -102,7 +106,6 @@ class BaseSettings(ABC, MutableMapping):
 
         if data is not None:
             self.data.update(data)
-
 
     def __enter__(self):
         return self
@@ -134,7 +137,6 @@ class BaseSettings(ABC, MutableMapping):
 
 
 class Settings(BaseSettings):
-
     data: TOMLDocument
 
     @staticmethod
@@ -143,12 +145,11 @@ class Settings(BaseSettings):
 
     @staticmethod
     def loads(str):
-        return tomlkit.loads(str) 
+        return tomlkit.loads(str)
 
     @staticmethod
     def new_data():
         return tomlkit.document()
-
 
 
 class JSONSettings(BaseSettings):
@@ -166,7 +167,6 @@ class JSONSettings(BaseSettings):
         return dict()
 
 
-
 @lru_cache
 def edit_projects() -> Settings:
     return Settings(xdg.xdg_config_home() / APP_NAME / 'projects.toml')
@@ -174,6 +174,7 @@ def edit_projects() -> Settings:
 
 def project_directory(project_name: str) -> Path:
     return xdg.xdg_data_home() / APP_NAME / project_name
+
 
 def project_state_directory(project_name: str, create=False) -> Path:
     path = project_directory(project_name) / ('.' + APP_NAME)
@@ -197,12 +198,14 @@ def verb_or_spec(value: str | Mapping | None, allowed_verbs=None):
         raise ValueError(f"verb must be one of {allowed_verbs}")
     return verb, arg
 
+
 def expand_path(path: str | os.PathLike, project_name=None, **kwargs) -> Path:
     if project_name:
         kwargs['PROJECT'] = project_name
         kwargs['PROJECT_DIR'] = project_directory(project_name)
     with update_environ(kwargs):
         return Path(os.path.expandvars(os.path.expanduser(path)))
+
 
 @contextmanager
 def update_environ(extra_env):
@@ -214,5 +217,6 @@ def update_environ(extra_env):
         del os.environ[key]
 
 
+@lru_cache
 def edit_project_state(project_name: str) -> BaseSettings:
     return JSONSettings(project_state_directory(project_name) / 'state.json')
