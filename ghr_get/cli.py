@@ -77,7 +77,7 @@ def rel2choice(ghrelease: Mapping, special=None) -> questionary.Choice:
     return questionary.Choice(title, value=special or ghrelease["tag_name"])
 
 def asset2choice(asset: GithubAsset) -> questionary.Choice:
-    return questionary.Choice(str(asset), value=asset)
+    return questionary.Choice(str(asset), value=asset, checked=asset.configured)
 
 
 @app.command()
@@ -88,44 +88,63 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
     """
     with edit_projects() as settings:
         project = get_project(url, must_exist=False)
-        project.update()
-        if 'release' not in project.config:
-            special = dict(
-                latest = first((release for release in project.releases if not release.data['prerelease'] and not release.data['draft']), default=None),
-                pre = first((release for release in project.releases if not release.data['draft']), default=None))
-            choices = []
-            for label, release in special.items():
-                if release:
-                    choices.append(rel2choice(release.data, label))
-            choices.extend(rel2choice(r) for r in project.releases)
-            selected = questionary.select('Which release would you like to use', choices, 
-                                            use_arrow_keys=True, use_shortcuts=True).ask()
-            logger.debug('Selected release %s', selected)
-            if selected in {'latest', 'pre'}:
-                project.config['release'] = selected
-                release_record = special[selected]
+        if project.configured:
+            console.print(f'The project [bold]{project.name}[/bold] is already configured:')
+            list_([project.name], config=True)
+            console.print('If you reconfigure it, [strike]it will be uninstalled first[/strike], and the '
+                          'existing configuration will be partially deleted.')
+            if questionary.confirm('Reconfigure the project?', default=False).ask():
+                ... # TODO project.uninstall()
             else:
-                release_record = [p for p in project.releases if p['tag_name'] == selected][0]
-                try:
-                    pattern = identifying_pattern(selected, [r.data['tag_name'] for r in project.releases])
-                    if detailed and '*' in pattern:
-                        pattern = questionary.text(f'Release matching pattern', 
-                                default=pattern, 
-                                validate=FNMatchValidator([c.value for c in choices], must_match=selected)).ask()
-                except NoPatternError:
-                    pattern = selected
-                project.config['release'] = pattern
+                return
+
+        project.update(all_releases=True)
+        special = dict(
+            latest = first((release for release in project.releases if not release.data['prerelease'] and not release.data['draft']), default=None),
+            pre = first((release for release in project.releases if not release.data['draft']), default=None))
+        choices = []
+        for label, release in special.items():
+            if release:
+                choices.append(rel2choice(release.data, label))
+        choices.extend(rel2choice(r) for r in project.releases)
+
+        if 'release' in project.config:
+            configured_release = project.config['release']
+            default_release_choice = first(c for c in choices if fnmatch.fnmatch(c.value, configured_release))
         else:
-            release_record = project.select_release()
+            default_release_choice = None
+
+        selected = questionary.select('Which release would you like to use', choices,
+                                      default=default_release_choice,
+                                      use_arrow_keys=True, use_shortcuts=True).ask()
+        logger.debug('Selected release %s', selected)
+        if selected in {'latest', 'pre'}:
+            project.config['release'] = selected
+            release_record = special[selected]
+        else:
+            release_record = [p for p in project.releases if p['tag_name'] == selected][0]
+            try:
+                pattern = identifying_pattern(selected, [r.data['tag_name'] for r in project.releases])
+                if detailed and '*' in pattern:
+                    pattern = questionary.text(f'Release matching pattern',
+                            default=pattern,
+                            validate=FNMatchValidator([c.value for c in choices], must_match=selected)).ask()
+            except NoPatternError:
+                pattern = selected
+            project.config['release'] = pattern
 
         logger.debug('Project config: %s', project.config)
         logger.debug('Global settings:\n%s', settings)
 
         # now select the asset(s)
         asset_choices = [asset2choice(a) for a in project.get_assets(release=release_record, configured=False)]
+
         selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices).ask()
+        for asset in project.get_assets():
+            asset.unconfigure()
 
         for asset in selected_assets:
+            asset.unconfigure()
             asset_name = asset.source.name
             asset_names = [a['name'] for a in release_record['assets']]
             try:
@@ -171,12 +190,13 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
 
 @app.command('list')
-def list_(details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
+def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omit for all)"),
+          details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
           config: bool = typer.Option(False, "-c", "--config", help="include configuration section")):
     """
     List the configured projects and their state.
     """
-    projects = edit_projects()
+    all_projects = edit_projects()
     if details:
         table = Table(box=None)
         table.add_column('Project')
@@ -185,7 +205,9 @@ def list_(details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show
         table.add_column('Updated')
         if config:
             table.add_column('Config')
-        for name in projects:
+        for name in all_projects:
+            if projects and name not in projects:
+                continue
             try:
                 project = get_project(name)
                 cells = [name, '?', repr(project.select_release()), '?']
@@ -193,10 +215,10 @@ def list_(details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show
                     cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
                 table.add_row(*cells)
             except Exception as e:
-                logger.error('Project %s could not be created: %s (config: %s)', name, e, projects[name])
+                logger.error('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
         console.print(table)
     else:
-        console.print("\n".join(name for name in projects))
+        console.print("\n".join(name for name in all_projects))
 
 
 @app.command()

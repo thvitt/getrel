@@ -347,6 +347,10 @@ class GitHubProject(Installable):
             rel_path = orig_path
         return fspath(rel_path)
 
+    @property
+    def configured(self) -> bool:
+        return all(k in self.config for k in ['url', 'release', 'assets'])
+
     def resolve_path(self, orig: Path | str) -> Path:
         """
         Returns an absolute path, resolved against the project directory
@@ -467,13 +471,13 @@ class GitHubProject(Installable):
 
         
 
-    def update(self) -> bool:
+    def update(self, all_releases=False) -> bool:
         """
         Update metadata. Returns True if we need a new 'download'.
         """
         update_url = f'https://api.github.com/repos/{self.user}/{self.repo}/releases'
         release_config = self.config.get('release')
-        if release_config == 'latest':
+        if release_config == 'latest' and not all_releases:
             update_url += '/latest'
         with self.release_cache as cache:
             releases_updated = fetch_if_newer(update_url, cache,
@@ -519,7 +523,7 @@ class GitHubProject(Installable):
         if release is None:
             return result
         if configured:
-            for spec in self.config['assets']:
+            for spec in self.config.get('assets', []):
                 matching_descs = [asset for asset in release.data['assets'] if fnmatch(asset['name'], spec['match'])]
                 if len(matching_descs) == 0:
                     logger.warning('%s %s: No asset matching %s found', self.name, release, spec['match'])
@@ -548,6 +552,17 @@ class GitHubProject(Installable):
             asset.spec = existing_spec
         else:
             assets.append(asset.spec)
+            asset.spec = assets[-1]
+
+    def unconfigure_asset(self, asset: "GithubAsset"):
+        if asset.spec is None:
+            logger.debug('Asset %s is unconfigured, no need to remove it', asset)
+        else:
+            assets = self.config['assets']
+            pattern = asset.spec['match']
+            existing_spec = first((a for a in assets if a['match'] == pattern), default=None)
+            if existing_spec:
+                assets.remove(existing_spec)
 
     def upgrade(self, update=True):
         if update:
@@ -611,7 +626,7 @@ class GitHubProject(Installable):
 
 class GithubAsset(Installable):
     project: GitHubProject
-    relese: str
+    release: str
     spec: MutableMapping | None
     asset_desc: Mapping
     cache: MutableMapping
@@ -629,6 +644,8 @@ class GithubAsset(Installable):
         self.project = project
         self.release = release
         self.spec = spec
+        if spec is None and 'assets' in project.config:
+            self.spec = first((a for a in project.config['assets'] if fnmatch(asset_desc['name'], a['match'])), default=None)
         self.asset_desc = asset_desc
         self.source = config.project_directory(self.project.name) / self.asset_desc['name']
 
@@ -640,6 +657,8 @@ class GithubAsset(Installable):
         """
         Adds or updates the asset's configuration in the project.
         """
+        if spec is None and kwargs:
+            spec.update(kwargs)
         if self.spec is None:
             if spec is None:
                 raise ValueError('Asset is not configured, need a spec')
@@ -649,7 +668,6 @@ class GithubAsset(Installable):
         else:
             if spec:
                 self.spec.update(spec)
-            self.spec.update(kwargs)
 
         logger.debug(self.spec)
 
@@ -658,6 +676,10 @@ class GithubAsset(Installable):
         self.cache = self.project.asset_cache[self.spec['match']]  # type: ignore
         self.needs_download = self.release != self.cache.get('release')  # type: ignore
         logger.debug('Configured spec=%s for asset %s', self.spec, self)
+
+    def unconfigure(self):
+        self.project.unconfigure_asset(self)
+        self.spec = None
 
     def __str__(self):
         asset = self.asset_desc
