@@ -61,8 +61,8 @@ class ProjectFile:
                 self.asset = asset
                 break
 
-        if asset and 'install' in asset.spec:
-            self.install = asset.spec['install']
+        if self.asset and 'install' in self.asset.spec:
+            self.install = self.asset.spec['install']
         elif not self.external and 'install' in project.config:
             for pattern, action in project.config['install'].items():
                 if fnmatch(project.project_relative_fspath(self.path), pattern):
@@ -188,7 +188,9 @@ class Installable:
             logger.error('%s: %s could not be identified as an archive, not unpacked.', self, self.source)
 
         project_directory = self.project.directory.resolve()    # type:ignore
-        return [(path / member).resolve().relative_to(project_directory) for member in member_names]
+        extracted_files = [(path / member).resolve().relative_to(project_directory) for member in member_names]
+        self.project.register_installed_file(*extracted_files)
+        return extracted_files
 
     def delete(self, arg=None):
         """
@@ -363,11 +365,6 @@ class GitHubProject(Installable):
             self._projects_config = config.edit_projects()
         self._projects_config[self.name] = value
 
-    ## state
-
-    @property
-    def state(self) -> BaseSettings:
-        return config.edit_project_state(self.name)
 
     def project_relative_fspath(self, orig: Path | str) -> str:
         """
@@ -452,6 +449,7 @@ class GitHubProject(Installable):
                 self.config = project_config
             self.user, self.repo = self.parse_github_url(self.config['url'])
 
+        self.state = config.JSONSettings(config.project_state_directory(self.name) / 'state.json')
         self.release_cache = config.JSONSettings(config.project_state_directory(self.name) / 'releases.json')
         self.asset_cache = config.JSONSettings(config.project_state_directory(self.name) / 'assets.json')
 
@@ -737,7 +735,7 @@ class GithubAsset(Installable):
                                          headers={'Accept': 'application/octet-stream'},
                                          stream=True)
                 if updated:
-                    self.cache.setdefault('files', []).append(self.source.name)
+                    self.project.register_installed_file(self.source)
                 return updated
             else:
                 return False

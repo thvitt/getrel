@@ -198,7 +198,7 @@ def file_table(project: GitHubProject):
     table.add_column('X')
     for file in project.get_installed():
         table.add_row(str(file),
-                      ' '.join(file.install.keys()) if file.install else '',
+                      str(file.install) if file.install else '',
                       'A' if file.asset else '',
                       'X' if file.external else '')
     return table
