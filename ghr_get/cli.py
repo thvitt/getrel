@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from typing import Collection, Optional, List
+
+import rich.table
 from prompt_toolkit.document import Document
 from prompt_toolkit.validation import ValidationError, Validator
 import typer
@@ -185,14 +187,29 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                     asset.configure({'install': {'link': link}})
             logger.debug('Running install for spec %s', asset.spec)
             asset.install()
-    settings.save()
+    project.save()
+
+
+def file_table(project: GitHubProject):
+    table = Table(box=None, show_header=False)
+    table.add_column('File')
+    table.add_column('Install')
+    table.add_column('A')
+    table.add_column('X')
+    for file in project.get_installed():
+        table.add_row(str(file),
+                      ' '.join(file.install.keys()) if file.install else '',
+                      'A' if file.asset else '',
+                      'X' if file.external else '')
+    return table
 
 
 
 @app.command('list')
 def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omit for all)"),
           details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
-          config: bool = typer.Option(False, "-c", "--config", help="include configuration section")):
+          config: bool = typer.Option(False, "-c", "--config", help="include configuration section"),
+          files: bool = typer.Option(False, "-f", "--files", help="show installed files")):
     """
     List the configured projects and their state.
     """
@@ -205,6 +222,8 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
         table.add_column('Updated')
         if config:
             table.add_column('Config')
+        if files:
+            table.add_column('Files')
         for name in all_projects:
             if projects and name not in projects:
                 continue
@@ -213,6 +232,8 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
                 cells = [name, '?', repr(project.select_release()), '?']
                 if config:
                     cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
+                if files:
+                    cells.append(file_table(project))
                 table.add_row(*cells)
             except Exception as e:
                 logger.error('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])

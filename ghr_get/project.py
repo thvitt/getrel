@@ -39,6 +39,40 @@ class Release(Mapping):
         return iter(self.data)
 
 
+class ProjectFile:
+    """
+    Represents a file installed by a project.
+    """
+
+    project: "GitHubProject"
+    path: Path
+    asset: Optional["GithubAsset"] = None
+    install: Optional[Mapping] = None
+    external: bool = False
+
+    def __init__(self, project: "GitHubProject", file: Path | str):
+        self.project = project
+        self.path = project.resolve_path(file)
+
+        self.external = not self.path.is_relative_to(project.directory)
+
+        for asset in project.get_assets():
+            if self.path.samefile(asset.source):
+                self.asset = asset
+                break
+
+        if asset and 'install' in asset.spec:
+            self.install = asset.spec['install']
+        elif not self.external and 'install' in project.config:
+            for pattern, action in project.config['install'].items():
+                if fnmatch(project.project_relative_fspath(self.path), pattern):
+                    self.install = action
+                    break
+
+    def __str__(self):
+        return self.project.project_relative_fspath(self.path)
+
+
 class GitHubRelease(Release):
 
     def __init__(self, release_record: Mapping):
@@ -361,23 +395,25 @@ class GitHubProject(Installable):
     @property
     def installed_files(self) -> list[str]:
         """
-        The list of files installed by this project's install() routine.
-
-        TODO: proper Path and resolve() handling
+        The list of files installed by this project's install() routine. This always returns project relative paths.
         """
-        return self.release_cache.setdefault('installed_files', [])
+        if 'installed_files' not in self.state:
+            self.state['installed_files'] = []
+        return self.state['installed_files']
 
     def register_installed_file(self, *files):
         file_list = self.installed_files
-        for file in map(fspath, files):
+        for file in map(self.project_relative_fspath, files):
             if file not in file_list:
                 file_list.append(file)
 
     def unregister_installed_file(self, *files):
-        for file in map(fspath, files):
+        for file in map(self.project_relative_fspath, files):
             if file in self.installed_files:
                 self.installed_files.remove(file)
 
+    def get_installed(self) -> list[ProjectFile]:
+        return [ProjectFile(self, f) for f  in self.installed_files]
 
     _directory: Optional[Path] = None
 
@@ -418,6 +454,12 @@ class GitHubProject(Installable):
 
         self.release_cache = config.JSONSettings(config.project_state_directory(self.name) / 'releases.json')
         self.asset_cache = config.JSONSettings(config.project_state_directory(self.name) / 'assets.json')
+
+    def save(self):
+        config.edit_projects().save()
+        self.state.save()
+        self.release_cache.save()
+        self.asset_cache.save()
 
     @staticmethod
     def parse_github_url(url: str) -> tuple[str, str]:
@@ -468,8 +510,6 @@ class GitHubProject(Installable):
         chdir(self.directory)
         yield self.directory
         chdir(old_cwd)
-
-        
 
     def update(self, all_releases=False) -> bool:
         """
