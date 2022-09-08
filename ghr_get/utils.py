@@ -185,3 +185,30 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
         return response
     else:
         return True
+
+
+def unique_substrings(strings: Iterable[str]) -> dict[str, str]:
+    """
+    Maps each given string to the shortest substring identifying the string within the list.
+
+    Returns a mapping string:substring for each string for which a shortest identifying usbstring has been found.
+
+    Example:
+        >>> unique_substrings(['ab', 'abab', 'abc'])
+        {'abab': 'ba', 'abc': 'c'}
+
+    Note that 'ab' is not in the results since it is completely contained within 'abab'
+    """
+    candidates = {}  # Map substring -> None if not unique  | string for identified string
+    for string in strings:
+        for length in range(1, len(string)):
+            for start in range(0, len(string) - length + 1):
+                substr = string[start:start + length]
+                candidates[substr] = None if substr in candidates else string
+
+    unique = {}  # Map string -> shortest identifying substring
+    for candidate, string in candidates.items():
+        if string is not None:
+            if string not in unique or len(unique[string]) > len(candidate):
+                unique[string] = candidate
+    return unique

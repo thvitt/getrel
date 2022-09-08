@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ import questionary
 from difflib import SequenceMatcher
 import fnmatch
 from itertools import chain
-from .utils import FileType, first
+from .utils import FileType, first, unique_substrings
 from .config import edit_projects
 
 import logging
@@ -138,7 +139,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
         else:
             release_record = [p for p in project.releases if p['tag_name'] == selected][0]
             try:
-                pattern = identifying_pattern(selected, [r.data['tag_name'] for r in project.releases])
+                pattern = identifying_pattern([r.data['tag_name'] for r in project.releases], selected)
                 if detailed and '*' in pattern:
                     pattern = questionary.text(f'Release matching pattern',
                             default=pattern,
@@ -162,7 +163,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
             asset_name = asset.source.name
             asset_names = [a['name'] for a in release_record['assets']]
             try:
-                pattern = identifying_pattern(asset_name, asset_names)
+                pattern = identifying_pattern(asset_names, asset_name, version=release_record.version)
             except NoPatternError:
                 pattern = asset_name
 
@@ -208,7 +209,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
         executables = [f for (f, t) in unconfigured.items() if t.executable]
         if len(executables) == 1:
             try:
-                pattern = identifying_pattern(str(executables[0]), map(str, project_files))
+                pattern = identifying_pattern(map(str, project_files), str(executables[0]))
                 if 'install' not in project.config:
                     project.config['install'] = {}
                 project.config['install'][pattern] = 'bin'
@@ -326,12 +327,12 @@ class NoPatternError(ValueError):
     ...
 
 
-def identifying_pattern(selection: str, alternatives: list[str]) -> str:
+def identifying_pattern(alternatives: list[str], selection: str, version: Optional[str] = None) -> str:
     """
     Given a selection string and a set of alternatives, this function returns a version of selection 
     that replaces all substrings common to all the selection and all alternatives with a '*'. E.g.,
     
-    >>> identifying_pattern('foo-linux.tar.gz', ['foo-windows.tar.gz', 'foo-macos.tar.gz'])
+    >>> identifying_pattern(['foo-windows.tar.gz', 'foo-macos.tar.gz'],'foo-linux.tar.gz')
     '*linux*'
     """
     if selection in alternatives:
@@ -347,24 +348,47 @@ def identifying_pattern(selection: str, alternatives: list[str]) -> str:
             matching_alternatives = fnmatch.filter(alternatives, pattern)
             if matching_alternatives:
                 raise NoPatternError(f'Could not generate a match pattern. The candidate, "{pattern}", matches {len(matching_alternatives)} alternatives: {matching_alternatives}')
+            logger.debug('Pattern %s for selection %s, alternatives %s', pattern, selection, alternatives)
             return True
-        except NoPatternError:
+        except NoPatternError as e:
+            logger.debug(e)
             if exception:
                 raise
             else:
                 return False
 
+    if version:
+        version_pattern = re.sub(r'\W', '.', version)
+        if version_pattern[0].casefold() == 'v':
+            version_pattern = version_pattern[1:]
+        version_pattern = '[vV]?' + version_pattern
+        versionless = re.sub(version_pattern, '*', selection)
+        if check_pattern(versionless, exception=False):
+            return versionless
+
     # try some typical constructions
-    path = Path(selection)
-    dir_star = str(Path('*', path.name))
-    if check_pattern(dir_star):
-        return dir_star
-    name_star = str(path.with_name('*'))
-    if check_pattern(name_star):
-        return name_star
-    stem_star = str(path.with_stem('*'))
-    if stem_star != name_star and check_pattern(stem_star):
-        return stem_star
+    #     path = Path(selection)
+    #     dir_star = str(Path('*', path.name))
+    #     if check_pattern(dir_star):
+    #         return dir_star
+    #     name_star = str(path.with_name('*'))
+    #     if check_pattern(name_star):
+    #         return name_star
+    #     stem_star = str(path.with_stem('*'))
+    #     if stem_star != name_star and check_pattern(stem_star):
+    #         return stem_star
+
+    # try minimal substrings
+    substring = unique_substrings([selection] + alternatives).get(selection)
+    if substring:
+        pos = selection.index(substring)
+        result = ''
+        if pos == 0:
+            result += '*'
+        result += substring
+        if pos + len(substring) < len(selection):
+            result += '*'
+        return result
 
     # collect common substrings (or rather, character indexes)
     common_idx = set(range(len(selection)))
