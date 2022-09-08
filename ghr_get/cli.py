@@ -3,12 +3,15 @@ import sys
 import shutil
 import subprocess
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Collection, Optional, List
 
 import rich.table
 from prompt_toolkit.document import Document
+from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.validation import ValidationError, Validator
 import typer
+from pygments.lexers.configs import TOMLLexer
 from rich.table import Table
 
 from .project import GitHubProject, GithubAsset, get_project
@@ -65,6 +68,15 @@ class FNMatchValidator(Validator):
             raise ValidationError(message=f'matches {len(matches)} items ({", ".join(matches)})')
         elif self.min_matches is not None and len(matches) < self.min_matches:
             raise ValidationError(message=f'matches only {len(matches)} instead of {self.min_matches} items')
+
+
+class TOMLValidator(Validator):
+
+    def validate(self, document: Document):
+        try:
+            tomlkit.loads(document.text)
+        except tomlkit.exceptions.ParseError as e:
+            raise ValidationError(message=str(e), cursor_position=document.translate_row_col_to_index(e.line, e.col))
 
 
 def rel2choice(ghrelease: Mapping, special=None) -> questionary.Choice:
@@ -187,20 +199,58 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                     asset.configure({'install': {'link': link}})
             logger.debug('Running install for spec %s', asset.spec)
             asset.install()
+
+        console.print(file_table(project, title="Installed Files", show_header=True, include_type=True))
+
+        # now we've installed and configured the assets – let's look for other unconfigured files.
+        project_files = {f: FileType(f.path) for f in project.get_installed() if not f.external}
+        unconfigured = {f: t for (f, t) in project_files.items() if not f.install}
+        executables = [f for (f, t) in unconfigured.items() if t.executable]
+        if len(executables) == 1:
+            try:
+                pattern = identifying_pattern(str(executables[0]), map(str, project_files))
+                if 'install' not in project.config:
+                    project.config['install'] = {}
+                project.config['install'][pattern] = 'bin'
+                del unconfigured[executables[0]]
+                console.print(f'Configured [bold]{pattern}[/bold] to be installed as command [bold]{project.name}[/bold]')
+            except NoPatternError:
+                logging.warning('Could not generate pattern for %s, leaving for manual config', executables[0])
+
+        config_str = tomlkit.dumps(project.config)
+        new_config_str = questionary.text('Edit project config',
+                                          default=config_str,
+                                          multiline=True,
+                                          validate=TOMLValidator(),
+                                          lexer=PygmentsLexer(TOMLLexer)).ask()
+        if new_config_str != config_str:
+            new_config = tomlkit.loads(new_config_str)
+            project.config.clear()
+            project.config.update(dict(new_config))
+
     project.save()
 
 
-def file_table(project: GitHubProject):
-    table = Table(box=None, show_header=False)
+def file_table(project: GitHubProject, include_type=False, **kwargs):
+    if 'box' not in kwargs:
+        kwargs['box'] = None
+    if 'show_header' not in kwargs:
+        kwargs['show_header'] = False
+    table = Table(**kwargs)
     table.add_column('File')
-    table.add_column('Install')
-    table.add_column('A')
-    table.add_column('X')
+    table.add_column('Action', style='green')
+    table.add_column('Asset?', style='cyan')
+    table.add_column('External?', style='red')
+    if include_type:
+        table.add_column('File Type')
     for file in project.get_installed():
-        table.add_row(str(file),
+        cells = [str(file),
                       str(file.install) if file.install else '',
                       'A' if file.asset else '',
-                      'X' if file.external else '')
+                      'X' if file.external else '']
+        if include_type:
+            cells.append(str(FileType(file.path)))
+        table.add_row(*cells, style='bold' if file.external else 'dim' if file.install else '')
     return table
 
 
@@ -284,9 +334,39 @@ def identifying_pattern(selection: str, alternatives: list[str]) -> str:
     >>> identifying_pattern('foo-linux.tar.gz', ['foo-windows.tar.gz', 'foo-macos.tar.gz'])
     '*linux*'
     """
-    # collect common substrings (or rather, character indexes)
     if selection in alternatives:
         alternatives = [a for a in alternatives if selection != a]
+
+    def check_pattern(pattern, exception=True):
+        """
+        A pattern is valid if it matches the selection but not any of the alternatives.
+        """
+        try:
+            if not fnmatch.fnmatch(selection, pattern):
+                raise NoPatternError(f'Could not generate a match pattern. The candidate, "{pattern}", does not match "{selection}".')
+            matching_alternatives = fnmatch.filter(alternatives, pattern)
+            if matching_alternatives:
+                raise NoPatternError(f'Could not generate a match pattern. The candidate, "{pattern}", matches {len(matching_alternatives)} alternatives: {matching_alternatives}')
+            return True
+        except NoPatternError:
+            if exception:
+                raise
+            else:
+                return False
+
+    # try some typical constructions
+    path = Path(selection)
+    dir_star = str(Path('*', path.name))
+    if check_pattern(dir_star):
+        return dir_star
+    name_star = str(path.with_name('*'))
+    if check_pattern(name_star):
+        return name_star
+    stem_star = str(path.with_stem('*'))
+    if stem_star != name_star and check_pattern(stem_star):
+        return stem_star
+
+    # collect common substrings (or rather, character indexes)
     common_idx = set(range(len(selection)))
     for alternative in alternatives:
         matcher = SequenceMatcher(a=selection, b=alternative)
@@ -304,10 +384,5 @@ def identifying_pattern(selection: str, alternatives: list[str]) -> str:
     pattern = ''.join(pattern_parts)
     
     # assert correctness
-    if not fnmatch.fnmatch(selection, pattern):
-        raise NoPatternError(f'Could not generate a match pattern. The candidate, "{pattern}", does not match "{selection}".')
-    matching_alternatives = fnmatch.filter(alternatives, pattern)
-    if matching_alternatives:
-        raise NoPatternError(f'Could not generate a match pattern. The candidate, "{pattern}", matches {len(matching_alternatives)} alternatives: {matching_alternatives}')
-        
+
     return pattern

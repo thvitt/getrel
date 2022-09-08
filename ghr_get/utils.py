@@ -79,7 +79,11 @@ class FileType:
         if not isinstance(file, Path):
             file = Path(file)
         self.file = file
-        if magic is not None:
+        if file.is_dir():
+            self.mime = 'inode/directory'
+            self.description = 'Directory'
+            return
+        elif magic is not None:
             self.mime = magic.from_file(file, mime=True)
             self.description = magic.from_file(file) or 'unknown'
         else:
@@ -92,7 +96,7 @@ class FileType:
             self.executable = True
         elif is_tarfile(file) or is_zipfile(file):
             self.archive = True
-        else:
+        elif file.is_file():
             with file.open(errors='ignore') as f:
                 if f.read(2) == '#!':
                     self.executable = True
