@@ -563,7 +563,7 @@ class GitHubProject(Installable):
         if release_config == 'latest' and not all_releases:
             update_url += '/latest'
         with self.release_cache as cache:
-            releases_updated = fetch_if_newer(update_url, cache,
+            releases_updated = fetch_if_newer(update_url, cache, message=f'Updating {self}',
                                               json='application/vnd.github+json')  # type:ignore # - will be bool
             if releases_updated:
                 selected_release = self.select_release()
@@ -779,6 +779,7 @@ class GithubAsset(Installable):
             if force or self.needs_download:
                 updated = fetch_if_newer(self.asset_desc['url'], self.cache,
                                          download_file=self.source,
+                                         message=str(self),
                                          headers={'Accept': 'application/octet-stream'},
                                          stream=True)
                 if updated:

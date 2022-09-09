@@ -220,3 +220,23 @@ def update_environ(extra_env):
 @lru_cache
 def edit_project_state(project_name: str) -> BaseSettings:
     return JSONSettings(project_state_directory(project_name) / 'state.json')
+
+
+def get_progress(**kwargs):
+    try:
+        from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
+        return Progress(
+                TextColumn("[bold blue]{task.description}", justify="right"),
+                BarColumn(bar_width=None),
+                "[progress.percentage]{task.percentage:>3.1f}%",
+                "•",
+                DownloadColumn(),
+                "•",
+                TransferSpeedColumn(),
+                "•",
+                TimeRemainingColumn(),
+                **kwargs
+        )
+    except ImportError:
+        from unittest.mock import Mock
+        return Mock()

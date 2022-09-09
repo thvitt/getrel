@@ -8,6 +8,9 @@ from zipfile import is_zipfile
 
 import requests
 import logging
+
+from .config import get_progress
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,7 +118,7 @@ class FileType:
 
 
 def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | None = None, json: bool | str = False,
-                   return_response: bool = False, cache_headers: bool = False, headers=None, **kwargs):
+                   return_response: bool = False, cache_headers: bool = False, headers=None, message=None, **kwargs):
     """
     Retrieves the given URL unless it has not been modified.
 
@@ -140,51 +143,61 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
         a response if return_response is true and True would have been returned.
     """
 
-    if headers is None:
-        headers = {}
-    if json:
-        headers['Accept'] = 'application/json'
-    if 'ETag' in cache:
-        headers['If-None-Match'] = str(cache['ETag'])
-    if 'Last-Modified' in cache:
-        headers['If-Modified-Since'] = str(cache['Last-Modified'])
-    response = requests.get(url, headers=headers, **kwargs)
-    if response.status_code == requests.codes.not_modified:
-        logger.debug('%s: Not modified', url)
-        return False
-    response.raise_for_status()
-    # if we land here, a full (updated or new) response has been received.
-    if cache_headers:
-        cache['url'] = response.url
-    if 'ETag' in response.headers:
-        cache['ETag'] = response.headers['ETag']
-    if 'Last-Modified' in response.headers:
-        cache['Last-Modified'] = response.headers['Last-Modified']
-    if cache_headers:
-        cache['headers'] = dict(response.headers)
-    if download_file:
-        logger.debug('%s: Downloading to %s', url, download_file)
-        download_file.parent.mkdir(parents=True, exist_ok=True)
-        with download_file.open('wb') as f:
-            for chunk in response.iter_content(chunk_size=None):
-                f.write(chunk)
-    elif json:
-        logger.debug('%s: Downloading JSON to cache', url)
-        cache['data'] = response.json()
-    else:
-        logger.debug('%s: Downloading data to cache', url)
-        try:
-            json = response.json()
+    with get_progress(transient=True) as progress:
+        progress_msg = str(message or download_file or url)
+
+        task_id = progress.add_task(progress_msg, start=False)
+        if headers is None:
+            headers = {}
+        if json:
+            headers['Accept'] = 'application/json'
+        if 'ETag' in cache:
+            headers['If-None-Match'] = str(cache['ETag'])
+        if 'Last-Modified' in cache:
+            headers['If-Modified-Since'] = str(cache['Last-Modified'])
+        response = requests.get(url, headers=headers, **kwargs)
+        if response.status_code == requests.codes.not_modified:
+            logger.debug('%s: Not modified', url)
+            progress.stop_task(task_id)
+            return False
+        response.raise_for_status()
+        # if we land here, a full (updated or new) response has been received.
+        if 'Content-Length' in response.headers:
+            progress.update(task_id, total=int(response.headers.get('Content-Length')))
+
+        if cache_headers:
+            cache['url'] = response.url
+        if 'ETag' in response.headers:
+            cache['ETag'] = response.headers['ETag']
+        if 'Last-Modified' in response.headers:
+            cache['Last-Modified'] = response.headers['Last-Modified']
+        if cache_headers:
+            cache['headers'] = dict(response.headers)
+        if download_file:
+            logger.debug('%s: Downloading to %s', url, download_file)
+            download_file.parent.mkdir(parents=True, exist_ok=True)
+            with download_file.open('wb') as f:
+                progress.start_task(task_id)
+                for chunk in response.iter_content(chunk_size=512*1024):
+                    progress.advance(task_id, len(chunk))
+                    f.write(chunk)
+        elif json:
+            logger.debug('%s: Downloading JSON to cache', url)
             cache['data'] = response.json()
-        except requests.JSONDecodeError:
-            if response.encoding is not None:
-                cache['data'] = response.text
-            else:
-                cache['data'] = response.content
-    if return_response:
-        return response
-    else:
-        return True
+        else:
+            logger.debug('%s: Downloading data to cache', url)
+            try:
+                json = response.json()
+                cache['data'] = response.json()
+            except requests.JSONDecodeError:
+                if response.encoding is not None:
+                    cache['data'] = response.text
+                else:
+                    cache['data'] = response.content
+        if return_response:
+            return response
+        else:
+            return True
 
 
 def unique_substrings(strings: Iterable[str]) -> dict[str, str]:

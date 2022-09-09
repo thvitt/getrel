@@ -361,7 +361,6 @@ def pd(project_name: str, command: List[str] = typer.Argument(None, help="Comman
     Access the given project and run a command in its directory. If no command is given, just print the project directory.
     """
     try:
-        questionary.confirm()
         project = get_project(project_name, must_exist=True)
         if not command:
             console.print(os.fspath(project.directory))
