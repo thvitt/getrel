@@ -152,84 +152,85 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
         logger.debug('Project config: %s', project.config)
         logger.debug('Global settings:\n%s', settings)
+        with project.use_directory():
 
-        # now select the asset(s)
-        asset_choices = [asset2choice(a) for a in project.get_assets(release=release_record, configured=False)]
+            # now select the asset(s)
+            asset_choices = [asset2choice(a) for a in project.get_assets(release=release_record, configured=False)]
 
-        selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices).ask()
-        for asset in project.get_assets():
-            asset.unconfigure()
+            selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices).ask()
+            for asset in project.get_assets():
+                asset.unconfigure()
 
-        for asset in selected_assets:
-            asset.unconfigure()
-            asset_name = asset.source.name
-            asset_names = [a['name'] for a in release_record['assets']]
-            try:
-                pattern = identifying_pattern(asset_names, asset_name, version=release_record.version)
-            except NoPatternError:
-                pattern = asset_name
+            for asset in selected_assets:
+                asset.unconfigure()
+                asset_name = asset.source.name
+                asset_names = [a['name'] for a in release_record['assets']]
+                try:
+                    pattern = identifying_pattern(asset_names, asset_name, version=release_record.version)
+                except NoPatternError:
+                    pattern = asset_name
 
-            if detailed:
-                pattern = questionary.text(f'Asset matching pattern',
-                        default=pattern,
-                        validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
-                        instruction=f'edit/accept pattern for {asset_name}').ask()
-            else:
-                logger.info('Asset pattern for %s: %s', asset_name, pattern)
-            asset.configure({'match': pattern})
-            asset.download()
-            # now let’s see what we got 
-            kind = FileType(asset.source)
-            if kind.executable:
                 if detailed:
-                    if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
-                            'Should I install it as binary {project.name}?').ask():
-                        asset.configure({'install': 'bin'})
-                    else:
-                        bin = questionary.text('Use a different binary name?', instruction='Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
-                        if bin:
-                            asset.configure({'install': {'bin': bin}})
+                    pattern = questionary.text(f'Asset matching pattern',
+                            default=pattern,
+                            validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
+                            instruction=f'edit/accept pattern for {asset_name}').ask()
                 else:
-                    asset.configure({'install': 'bin'})
-                    logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, project.name)
-            if not asset.spec.get('install') and kind.archive:
-                if not detailed or questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
-                        'Should I unpack it?').ask():
-                    asset.configure({'install': 'unpack'})
-            if not asset.spec.get('install'):
-                link = questionary.path('Symlink somewhere? You can use ~ and ${VAR}s', only_directories=True).ask()
-                if link:
-                    asset.configure({'install': {'link': link}})
-            logger.debug('Running install for spec %s', asset.spec)
-            asset.install()
+                    logger.info('Asset pattern for %s: %s', asset_name, pattern)
+                asset.configure({'match': pattern})
+                asset.download()
+                # now let’s see what we got
+                kind = FileType(asset.source)
+                if kind.executable:
+                    if detailed:
+                        if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
+                                'Should I install it as binary {project.name}?').ask():
+                            asset.configure({'install': 'bin'})
+                        else:
+                            bin = questionary.text('Use a different binary name?', instruction='Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
+                            if bin:
+                                asset.configure({'install': {'bin': bin}})
+                    else:
+                        asset.configure({'install': 'bin'})
+                        logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, project.name)
+                if not asset.spec.get('install') and kind.archive:
+                    if not detailed or questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
+                            'Should I unpack it?').ask():
+                        asset.configure({'install': 'unpack'})
+                if not asset.spec.get('install'):
+                    link = questionary.path('Symlink somewhere? You can use ~ and ${VAR}s', only_directories=True).ask()
+                    if link:
+                        asset.configure({'install': {'link': link}})
+                logger.debug('Running install for spec %s', asset.spec)
+                asset.install()
 
-        console.print(file_table(project, title="Installed Files", show_header=True, include_type=True))
+            console.print(file_table(project, title="Installed Files", show_header=True, include_type=True))
 
-        # now we've installed and configured the assets – let's look for other unconfigured files.
-        project_files = {f: FileType(f.path) for f in project.get_installed() if not f.external}
-        unconfigured = {f: t for (f, t) in project_files.items() if not f.install}
-        executables = [f for (f, t) in unconfigured.items() if t.executable]
-        if len(executables) == 1:
-            try:
-                pattern = identifying_pattern(map(str, project_files), str(executables[0]))
-                if 'install' not in project.config:
-                    project.config['install'] = {}
-                project.config['install'][pattern] = 'bin'
-                del unconfigured[executables[0]]
-                console.print(f'Configured [bold]{pattern}[/bold] to be installed as command [bold]{project.name}[/bold]')
-            except NoPatternError:
-                logging.warning('Could not generate pattern for %s, leaving for manual config', executables[0])
+            # now we've installed and configured the assets – let's look for other unconfigured files.
+            project_files = {f: FileType(f.path) for f in project.get_installed() if not f.external}
+            unconfigured = {f: t for (f, t) in project_files.items() if not f.install}
+            executables = [f for (f, t) in unconfigured.items() if t.executable]
+            if len(executables) == 1:
+                try:
+                    pattern = identifying_pattern(map(str, project_files), str(executables[0]))
+                    if 'install' not in project.config:
+                        project.config['install'] = {}
+                    project.config['install'][pattern] = 'bin'
+                    del unconfigured[executables[0]]
+                    console.print(f'Configured [bold]{pattern}[/bold] to be installed as command [bold]{project.name}[/bold]')
+                except NoPatternError:
+                    logging.warning('Could not generate pattern for %s, leaving for manual config', executables[0])
 
-        config_str = tomlkit.dumps(project.config)
-        new_config_str = questionary.text('Edit project config',
-                                          default=config_str,
-                                          multiline=True,
-                                          validate=TOMLValidator(),
-                                          lexer=PygmentsLexer(TOMLLexer)).ask()
-        if new_config_str != config_str:
-            new_config = tomlkit.loads(new_config_str)
-            project.config.clear()
-            project.config.update(dict(new_config))
+            config_str = tomlkit.dumps(project.config)
+            new_config_str = questionary.text('Edit project config',
+                                              default=config_str,
+                                              multiline=True,
+                                              validate=TOMLValidator(),
+                                              lexer=PygmentsLexer(TOMLLexer)).ask()
+            if new_config_str != config_str:
+                new_config = tomlkit.loads(new_config_str)
+                project.config.clear()
+                project.config.update(dict(new_config))
 
     project.save()
 

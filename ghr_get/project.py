@@ -151,7 +151,11 @@ class Installable:
         """
         assert self.source is not None
         link = config.expand_path(arg, self.project.name, asset=self.source.name)
-        link.symlink_to(self.source)
+        if link.is_symlink():
+            logger.warning('Overwriting link %s (which pointed to %s) with %s',
+                           link, link.readlink(), self.source)
+            link.unlink()
+        link.symlink_to(self.source.absolute())     # FIXME can we use 'intelligent' relative links here, cf. fetchlink?
         self.project.register_installed_file(link)
         logger.info('Linked %s from %s', self.source, link)
         return [link]
@@ -313,9 +317,13 @@ class Installable:
             while new_sources:
                 source = new_sources.pop(0)
                 for pattern, spec in project_spec.items():
-                    if fnmatch(source, pattern):
+                    if source.is_relative_to(self.project.directory) and fnmatch(source, pattern):
                         logger.debug('Identified install rule %s=%s for %s', pattern, spec, source)
-                        new_sources.extend(Installable(self.project, source, spec)._run_actions(spec))
+                        installable = Installable(self.project, source, spec)
+                        new_sources.extend(installable._run_actions(spec))
+
+    def __repr__(self):
+        return f'<{self.__class__.__name} source={self.source} spec={self.spec!r}>'
 
 
 class GitHubProject(Installable):

@@ -151,10 +151,11 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
             headers = {}
         if json:
             headers['Accept'] = 'application/json'
-        if 'ETag' in cache:
-            headers['If-None-Match'] = str(cache['ETag'])
-        if 'Last-Modified' in cache:
-            headers['If-Modified-Since'] = str(cache['Last-Modified'])
+        if download_file is None or download_file.exists():
+            if 'ETag' in cache:
+                headers['If-None-Match'] = str(cache['ETag'])
+            if 'Last-Modified' in cache:
+                headers['If-Modified-Since'] = str(cache['Last-Modified'])
         response = requests.get(url, headers=headers, **kwargs)
         if response.status_code == requests.codes.not_modified:
             logger.debug('%s: Not modified', url)

@@ -210,7 +210,7 @@ def expand_path(path: str | os.PathLike, project_name=None, **kwargs) -> Path:
 @contextmanager
 def update_environ(extra_env):
     backup = dict(os.environ)
-    os.environ.update(extra_env)
+    os.environ.update({str(k): str(v) for k, v in extra_env.items()})
     yield os.environ
     os.environ.update(backup)
     for key in set(os.environ) - set(backup):
