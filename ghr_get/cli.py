@@ -13,7 +13,9 @@ from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.validation import ValidationError, Validator
 import typer
 from pygments.lexers.configs import TOMLLexer
+from rich.live import Live
 from rich.table import Table
+from rich.text import Text
 
 from .project import GitHubProject, GithubAsset, get_project
 import questionary
@@ -21,7 +23,7 @@ from difflib import SequenceMatcher
 import fnmatch
 from itertools import chain
 from .utils import FileType, first, unique_substrings
-from .config import edit_projects
+from .config import edit_projects, APP_NAME, project_directory, project_state_directory
 
 import logging
 from rich.logging import RichHandler
@@ -106,10 +108,10 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
         if project.configured:
             console.print(f'The project [bold]{project.name}[/bold] is already configured:')
             list_([project.name], config=True)
-            console.print('If you reconfigure it, [strike]it will be uninstalled first[/strike], and the '
+            console.print('If you reconfigure it, it will be uninstalled first, and the '
                           'existing configuration will be partially deleted.')
             if questionary.confirm('Reconfigure the project?', default=False).ask():
-                ... # TODO project.uninstall()
+                project.uninstall(keep_assets=True)
             else:
                 return
 
@@ -231,6 +233,52 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
     project.save()
 
+def _remove_directory(directory: Path, force: bool):
+    if force:
+        shutil.rmtree(directory)
+    else:
+        files = list(directory.glob('**/*'))
+        if files:
+            console.print(f'{directory} still contains these files:')
+            console.print(*[f'• {f}' for f in files], sep='\n')
+            if questionary.confirm(f'Should {directory} still be deleted?').ask():
+                shutil.rmtree(directory)
+
+@app.command()
+def uninstall(projects: List[str],
+              remove_config: bool = typer.Option(False, '-c', '--config',  help="Also remove the configuration for the project"),
+              remove_status: bool = typer.Option(False, '-s', '--status',  help=f"Also remove {APP_NAME}'s state info for the project"),
+              remove_directory: bool = typer.Option(False, '-d', '--directory',  help="Also remove everything within the project directory"),
+              yes: bool = typer.Option(False, '-y', '--yes',  help="Assume Yes as answer to all questions")):
+    with edit_projects() as settings:
+        for project_name in projects:
+            if project_name not in settings:
+                if remove_directory:
+                    _remove_directory(project_directory(project_name), yes)
+                    continue
+                elif project_directory(project_name).is_dir():
+                    logger.error("Project %s is not configured. Use -d to remove stale project directory.", project_name)
+                    continue
+                else:
+                    logger.error('Project %s is unknown.', project_name)
+                    continue
+            project = get_project(project_name)
+            project.uninstall()
+
+            if remove_status:
+                shutil.rmtree(project_state_directory(project_name))
+
+            if remove_directory:
+                _remove_directory(project.directory, yes)
+
+            if remove_config:
+                if not yes:
+                    console.print(Text('This project configuration is in the project settings file: ', style='bold'),
+                                  Syntax(tomlkit.dumps({project.name: project.config}), 'toml'), sep='\n')
+                    if not questionary.confirm('Should it be permanently deleted?').ask():
+                        continue
+                del settings[project.name]
+
 
 def file_table(project: GitHubProject, include_type=False, **kwargs):
     if 'box' not in kwargs:
@@ -313,6 +361,7 @@ def pd(project_name: str, command: List[str] = typer.Argument(None, help="Comman
     Access the given project and run a command in its directory. If no command is given, just print the project directory.
     """
     try:
+        questionary.confirm()
         project = get_project(project_name, must_exist=True)
         if not command:
             console.print(os.fspath(project.directory))

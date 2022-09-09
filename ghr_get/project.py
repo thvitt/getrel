@@ -57,9 +57,14 @@ class ProjectFile:
         self.external = not self.path.is_relative_to(project.directory)
 
         for asset in project.get_assets():
-            if self.path.samefile(asset.source):
-                self.asset = asset
-                break
+            try:
+                if self.path.samefile(asset.source):
+                    self.asset = asset
+                    break
+            except OSError:
+                if self.path == asset.source:
+                    self.asset = asset
+                    break
 
         if self.asset and 'install' in self.asset.spec:
             self.install = self.asset.spec['install']
@@ -414,9 +419,42 @@ class GitHubProject(Installable):
         for file in map(self.project_relative_fspath, files):
             if file in self.installed_files:
                 self.installed_files.remove(file)
+                logger.debug('unregistered %s', file)
+            else:
+                logger.debug('%s not registered, cannot unregister', file)
 
     def get_installed(self) -> list[ProjectFile]:
         return [ProjectFile(self, f) for f  in self.installed_files]
+
+    def uninstall(self, keep_assets=False):
+        with self.use_directory():
+            parents = set()
+            for project_file in sorted(self.get_installed(), key=lambda pf: len(pf.path.parts), reverse=True):
+                try:
+                    if not keep_assets or not project_file.asset:
+                        if project_file.path.parent.is_relative_to(self.directory):
+                            parents.add(project_file.path.parent)
+                        if project_file.path.is_dir():
+                            project_file.path.rmdir()
+                        elif project_file.path.exists():
+                            project_file.path.unlink()
+                            logger.debug('uninstalled %s', project_file)
+                        else:
+                            logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op', project_file, self)
+                        self.unregister_installed_file(project_file.path)
+                except IOError as e:
+                    logger.error('Unable to delete %s (%s) while uninstalling %s', project_file, e, self)
+        # now cleanup empty directories
+        for parent in sorted(parents, key=lambda p: len(p.parts), reverse=True):
+            try:
+                if parent.exists() and parent != self.directory:
+                    parent.rmdir()
+            except IOError as e:
+                logger.info('Keeping non-empty directory %s', parent)
+        # persist changed state
+        self.state['installed_release'] = None
+        self.save()
+
 
     _directory: Optional[Path] = None
 
@@ -509,11 +547,12 @@ class GitHubProject(Installable):
             with project.use_directory() as pd:
                 assert Path.cwd() == pd
         """
-
         old_cwd = Path.cwd()
         chdir(self.directory)
+        #logger.debug('Changed into project directory: %s (from %s)', self.directory, old_cwd)
         yield self.directory
         chdir(old_cwd)
+        #logger.debug('Changed back to %s', old_cwd)
 
     def update(self, all_releases=False) -> bool:
         """
@@ -667,6 +706,8 @@ class GitHubProject(Installable):
                 record_new_files.extend(new_files)
             return result.returncode
 
+    def __str__(self):
+        return self.name
 
 class GithubAsset(Installable):
     project: GitHubProject
