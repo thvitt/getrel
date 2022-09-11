@@ -202,6 +202,21 @@ def update(projects: List[str] = typer.Argument(None)):
     return updated
 
 
+@app.command()
+def install(projects: List[str] = typer.Argument(None),
+            update: bool = typer.Option(False, help="update the project state first"),
+            reinstall: bool = typer.Option(False, help="run install even if already installed")):
+    """Install given or all projects."""
+    if not projects:
+        projects = edit_projects()
+    for name in projects:
+        project = get_project(name, must_exist=True)
+        if update:
+            project.update()
+        if reinstall or project.needs_install:
+            project.install()
+
+
 def _clear_display_names(table):
     if hasattr(table, 'display_name'):
         table.display_name = None

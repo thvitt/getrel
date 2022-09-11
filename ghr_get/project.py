@@ -385,7 +385,6 @@ class GitHubProject(Installable):
             self._projects_config = config.edit_projects()
         self._projects_config[self.name] = value
 
-
     def project_relative_fspath(self, orig: Path | str) -> str:
         """
         returns a string represantation that is relative to the project directory
@@ -461,7 +460,7 @@ class GitHubProject(Installable):
             except IOError as e:
                 logger.info('Keeping non-empty directory %s', parent)
         # persist changed state
-        self.state['installed_release'] = None
+        self.state['installed'] = None
         self.save()
 
 
@@ -505,6 +504,7 @@ class GitHubProject(Installable):
         self.state = config.JSONSettings(config.project_state_directory(self.name) / 'state.json')
         self.release_cache = config.JSONSettings(config.project_state_directory(self.name) / 'releases.json')
         self.asset_cache = config.JSONSettings(config.project_state_directory(self.name) / 'assets.json')
+        self.project = self
 
     def save(self):
         config.edit_projects().save()
@@ -675,10 +675,19 @@ class GitHubProject(Installable):
             self.install()
 
     def install(self, including_assets=True):
-        super.install(including_assets=including_assets)
+        if self.needs_update:
+            self.update()
+        super().install(including_assets=including_assets)
         with self.state as state:
             state['installed'] = self.select_release().version
 
+    @property
+    def needs_install(self):
+        return not self.state.get('installed')
+
+    @property
+    def needs_update(self):
+        return not self.state.get('updated')
 
     def exec_script(self, script: str, record_new_files: Optional[list] = None) -> int:
         """
