@@ -73,14 +73,6 @@ class FNMatchValidator(Validator):
             raise ValidationError(message=f'matches only {len(matches)} instead of {self.min_matches} items')
 
 
-class TOMLValidator(Validator):
-
-    def validate(self, document: Document):
-        try:
-            tomlkit.loads(document.text)
-        except tomlkit.exceptions.ParseError as e:
-            raise ValidationError(message=str(e), cursor_position=document.translate_row_col_to_index(e.line, e.col))
-
 
 def rel2choice(ghrelease: Mapping, special=None) -> questionary.Choice:
     title = ghrelease["tag_name"]
@@ -116,39 +108,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                 return
 
         project.update(all_releases=True)
-        special = dict(
-            latest = first((release for release in project.releases if not release.data['prerelease'] and not release.data['draft']), default=None),
-            pre = first((release for release in project.releases if not release.data['draft']), default=None))
-        choices = []
-        for label, release in special.items():
-            if release:
-                choices.append(rel2choice(release.data, label))
-        choices.extend(rel2choice(r) for r in project.releases)
-
-        if 'release' in project.config:
-            configured_release = project.config['release']
-            default_release_choice = first(c for c in choices if fnmatch.fnmatch(c.value, configured_release))
-        else:
-            default_release_choice = None
-
-        selected = questionary.select('Which release would you like to use', choices,
-                                      default=default_release_choice,
-                                      use_arrow_keys=True, use_shortcuts=True).ask()
-        logger.debug('Selected release %s', selected)
-        if selected in {'latest', 'pre'}:
-            project.config['release'] = selected
-            release_record = special[selected]
-        else:
-            release_record = [p for p in project.releases if p['tag_name'] == selected][0]
-            try:
-                pattern = identifying_pattern([r.data['tag_name'] for r in project.releases], selected)
-                if detailed and '*' in pattern:
-                    pattern = questionary.text(f'Release matching pattern',
-                            default=pattern,
-                            validate=FNMatchValidator([c.value for c in choices], must_match=selected)).ask()
-            except NoPatternError:
-                pattern = selected
-            project.config['release'] = pattern
+        release_record = _select_release(project, detailed)
 
         logger.debug('Project config: %s', project.config)
         logger.debug('Global settings:\n%s', settings)
@@ -221,18 +181,79 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                 except NoPatternError:
                     logging.warning('Could not generate pattern for %s, leaving for manual config', executables[0])
 
-            config_str = tomlkit.dumps(project.config)
-            new_config_str = questionary.text('Edit project config',
-                                              default=config_str,
-                                              multiline=True,
-                                              validate=TOMLValidator(),
-                                              lexer=PygmentsLexer(TOMLLexer)).ask()
-            if new_config_str != config_str:
-                new_config = tomlkit.loads(new_config_str)
-                project.config.clear()
-                project.config.update(dict(new_config))
+            edit_project_config(project)
 
     project.save()
+
+
+def _clear_display_names(table):
+    if hasattr(table, 'display_name'):
+        table.display_name = None
+    if isinstance(table, tomlkit.api.Container):
+        for v in table.values():
+            _clear_display_names(v)
+
+
+class TOMLValidator(Validator):
+
+    def validate(self, document: Document):
+        try:
+            tomlkit.loads(document.text)
+        except tomlkit.exceptions.ParseError as e:
+            raise ValidationError(message=str(e), cursor_position=document.translate_row_col_to_index(e.line, e.col))
+
+
+def edit_project_config(project):
+    config_str = tomlkit.dumps(project.config)
+    new_config_str = questionary.text('Edit project config',
+                                      default=config_str,
+                                      multiline=True,
+                                      validate=TOMLValidator(),
+                                      lexer=PygmentsLexer(TOMLLexer)).ask()
+    if new_config_str != config_str:
+        new_config = tomlkit.loads(new_config_str)
+        project.config.clear()
+        _clear_display_names(new_config)
+        project.config.update(new_config)
+
+
+def _select_release(project, detailed):
+    """Let the user select a release for the project. Configures the given project"""
+    special = dict(
+            latest=first((release for release in project.releases if
+                          not release.data['prerelease'] and not release.data['draft']), default=None),
+            pre=first((release for release in project.releases if not release.data['draft']), default=None))
+    choices = []
+    for label, release in special.items():
+        if release:
+            choices.append(rel2choice(release.data, label))
+    choices.extend(rel2choice(r) for r in project.releases)
+    if 'release' in project.config:
+        configured_release = project.config['release']
+        default_release_choice = first(c for c in choices if fnmatch.fnmatch(c.value, configured_release))
+    else:
+        default_release_choice = None
+    selected = questionary.select('Which release would you like to use', choices,
+                                  default=default_release_choice,
+                                  use_arrow_keys=True, use_shortcuts=True).ask()
+    logger.debug('Selected release %s', selected)
+    if selected in {'latest', 'pre'}:
+        project.config['release'] = selected
+        release_record = special[selected]
+    else:
+        release_record = [p for p in project.releases if p['tag_name'] == selected][0]
+        try:
+            pattern = identifying_pattern([r.data['tag_name'] for r in project.releases], selected)
+            if detailed and '*' in pattern:
+                pattern = questionary.text(f'Release matching pattern',
+                                           default=pattern,
+                                           validate=FNMatchValidator([c.value for c in choices],
+                                                                     must_match=selected)).ask()
+        except NoPatternError:
+            pattern = selected
+        project.config['release'] = pattern
+    return release_record
+
 
 def _remove_directory(directory: Path, force: bool):
     if force:

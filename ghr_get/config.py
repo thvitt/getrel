@@ -77,6 +77,7 @@ class BaseSettings(ABC, MutableMapping):
         """
         new_content = self.dumps(self.data)
         if force or new_content != self.last_state:
+            assert isinstance(self.loads(new_content), Mapping)
             if file is None:
                 file = self.store
             file.parent.mkdir(parents=True, exist_ok=True)
