@@ -1,5 +1,6 @@
 from collections.abc import Mapping, MutableMapping
 from contextlib import contextmanager
+from datetime import datetime
 from glob import glob
 from operator import itemgetter
 from os import environ, fspath, chdir
@@ -570,18 +571,20 @@ class GitHubProject(Installable):
         release_config = self.config.get('release')
         if release_config == 'latest' and not all_releases:
             update_url += '/latest'
-        with self.release_cache as cache:
+        with self.release_cache as cache, self.state as state:
             releases_updated = fetch_if_newer(update_url, cache, message=f'Updating {self}',
                                               json='application/vnd.github+json')  # type:ignore # - will be bool
+            state['updated'] = datetime.now().isoformat()
             if releases_updated:
                 selected_release = self.select_release()
                 if selected_release:
-                    cache['selected_release'] = selected_release.version
+                    state['candidate'] = selected_release.version
                     logger.info('%s: New release %s available', self.name, selected_release)
                     return True
                 else:
-                    cache['selected_release'] = None
-                    logger.warning('%s: No release matching %s found.', self.name, release_config)
+                    if release_config:
+                        logger.warning('%s: No release matching %s found.', self.name, release_config)
+                    state['candidate'] = None
                     return False  # no release, no update
             else:
                 logger.debug('%s: Releases not updated.', self.name)
@@ -655,7 +658,7 @@ class GitHubProject(Installable):
             if existing_spec:
                 assets.remove(existing_spec)
 
-    def upgrade(self, update=True):
+    def upgrade(self, update=True):     # FIXME do we really need this?
         if update:
             self.update()
         needs_install = False
@@ -670,6 +673,12 @@ class GitHubProject(Installable):
                     logger.exception('Failed to install %s for %s: %s', asset.source.name, self.name, e)
         if needs_install:
             self.install()
+
+    def install(self, including_assets=True):
+        super.install(including_assets=including_assets)
+        with self.state as state:
+            state['installed'] = self.select_release().version
+
 
     def exec_script(self, script: str, record_new_files: Optional[list] = None) -> int:
         """

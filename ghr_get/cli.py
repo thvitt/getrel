@@ -32,6 +32,8 @@ from rich.syntax import Syntax
 import tomlkit
 
 console = Console()
+from . import config
+config.console = console
 
 FORMAT = "%(message)s"
 log_handler = RichHandler(console=console, show_time=False, rich_tracebacks=False)
@@ -183,7 +185,21 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
             edit_project_config(project)
 
+        project.install()
     project.save()
+
+
+@app.command()
+def update(projects: List[str] = typer.Argument(None)):
+    """Update project metadata."""
+    updated = []
+    if not projects:
+        projects = edit_projects()
+    for name in projects:
+        project = get_project(name, must_exist=True)
+        if project.update():
+            updated.append(project)
+    return updated
 
 
 def _clear_display_names(table):
@@ -350,7 +366,7 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
                 continue
             try:
                 project = get_project(name)
-                cells = [name, '?', repr(project.select_release()), '?']
+                cells = [name, project.state.get('installed', '–'), repr(project.select_release()), project.state.get('updated', '–')]
                 if config:
                     cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
                 if files:

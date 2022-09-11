@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
+from difflib import unified_diff
 from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
@@ -12,6 +13,9 @@ import os
 import xdg
 import tomlkit
 
+import logging
+logger = logging.getLogger(__name__)
+
 APP_NAME = 'ghr-get'
 
 """
@@ -20,6 +24,7 @@ APP_NAME = 'ghr-get'
 - ~/.local/{APP_NAME}/{project} is the project specific 
 """
 
+console = None
 
 class BaseSettings(ABC, MutableMapping):
     """
@@ -82,6 +87,11 @@ class BaseSettings(ABC, MutableMapping):
                 file = self.store
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(new_content)
+            if logger.isEnabledFor(logging.DEBUG):
+                if self.last_state:
+                    logger.debug('Saved %s, diff: %s', self.store, '\n'.join(unified_diff(self.last_state.split('\n'), new_content.split('\n'))))
+                else:
+                    logger.debug('Created %s, content: %s', self.store, new_content)
             self.last_state = new_content
 
     def __init__(self, file: Path | str, data: Mapping | None = None, save_on_error=True) -> None:
@@ -157,7 +167,7 @@ class JSONSettings(BaseSettings):
 
     @staticmethod
     def dumps(data: MutableMapping) -> str:
-        return json.dumps(data)
+        return json.dumps(data, indent=2)
 
     @staticmethod
     def loads(data):
@@ -226,6 +236,9 @@ def edit_project_state(project_name: str) -> BaseSettings:
 def get_progress(**kwargs):
     try:
         from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
+        if console and not 'console' in kwargs:
+            kwargs['console'] = console
+
         return Progress(
                 TextColumn("[bold blue]{task.description}", justify="right"),
                 BarColumn(bar_width=None),
