@@ -214,7 +214,7 @@ def install(projects: List[str] = typer.Argument(None),
         if update:
             project.update()
         if reinstall or project.needs_install:
-            project.install()
+            project.install(force=reinstall)
 
 
 def _clear_display_names(table):
@@ -388,7 +388,7 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
                     cells.append(file_table(project))
                 table.add_row(*cells)
             except Exception as e:
-                logger.error('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
+                logger.exception('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
         console.print(table)
     else:
         console.print("\n".join(name for name in all_projects))

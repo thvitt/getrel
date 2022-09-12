@@ -171,7 +171,7 @@ class Installable:
         assert self.source is not None
         self.source.chmod(0o755)
         if arg is None:
-            arg = self.project.name
+            arg = self.source.stem #self.project.name
         link = config.expand_path(arg, project_name=self.project.name, source=self.source)
         if not link.is_absolute():
             link = Path.home() / '.local/bin' / arg
@@ -300,7 +300,7 @@ class Installable:
             return self._actions_from_mapping({spec: None})
 
     def install(self, including_assets=True, check_extra_sources: Optional[list] = None):
-        with self.project.directory:
+        with self.project.use_directory():
             new_sources = []
             if check_extra_sources:
                 new_sources.extend(check_extra_sources)
@@ -317,8 +317,10 @@ class Installable:
             project_spec = self.project.config.get('install', {})
             while new_sources:
                 source = new_sources.pop(0)
+                is_in_pd = source.absolute().is_relative_to(self.project.directory)
                 for pattern, spec in project_spec.items():
-                    if source.is_relative_to(self.project.directory) and fnmatch(source, pattern):
+                    matches_pattern = fnmatch(source, pattern)
+                    if is_in_pd and matches_pattern:
                         logger.debug('Identified install rule %s=%s for %s', pattern, spec, source)
                         installable = Installable(self.project, source, spec)
                         new_sources.extend(installable._run_actions(spec))
@@ -406,7 +408,7 @@ class GitHubProject(Installable):
         Returns an absolute path, resolved against the project directory
         """
         with self.use_directory():
-            return Path(orig).resolve()
+            return Path(orig).absolute()
 
     @property
     def installed_files(self) -> list[str]:
@@ -444,7 +446,7 @@ class GitHubProject(Installable):
                             parents.add(project_file.path.parent)
                         if project_file.path.is_dir():
                             project_file.path.rmdir()
-                        elif project_file.path.exists():
+                        elif project_file.path.is_symlink() or project_file.path.exists():
                             project_file.path.unlink()
                             logger.debug('uninstalled %s', project_file)
                         else:
@@ -593,14 +595,18 @@ class GitHubProject(Installable):
     @property
     def releases(self) -> list[Release]:
         releases = self.release_cache.get('data')
-        if isinstance(releases, Mapping):
+        if not releases:
+            return []
+        elif isinstance(releases, Mapping):
             return [GitHubRelease(releases)]
         else:
             return [GitHubRelease(r) for r in sorted(releases, key=itemgetter('created_at'), reverse=True)]  # type:ignore #- if its not a list, its a mapping
 
-    def select_release(self) -> Release:
+    def select_release(self) -> Optional[Release]:
         release_config = self.config.get('release', '')
         releases = self.releases
+        if not releases:
+            return None
         if release_config == 'latest':
             return first((release for release in releases if not release.data['prerelease'] and not release.data['draft']),
                          default=None)
@@ -658,8 +664,8 @@ class GitHubProject(Installable):
             if existing_spec:
                 assets.remove(existing_spec)
 
-    def upgrade(self, update=True):     # FIXME do we really need this?
-        if update:
+    def download(self):
+        if self.needs_update:
             self.update()
         needs_install = False
         with self.asset_cache:
@@ -667,17 +673,16 @@ class GitHubProject(Installable):
                 try:
                     asset_needs_install = bool(asset.download())
                     needs_install |= asset_needs_install
-                    if asset_needs_install:
-                        asset.install()
                 except Exception as e:
-                    logger.exception('Failed to install %s for %s: %s', asset.source.name, self.name, e)
-        if needs_install:
-            self.install()
+                    logger.exception('Failed to download %s for %s: %s', asset.source.name, self.name, e)
+        return needs_install
 
-    def install(self, including_assets=True):
+    def install(self, including_assets=True, force=False):
         if self.needs_update:
             self.update()
-        super().install(including_assets=including_assets)
+        needs_install = self.download()
+        if needs_install or force:
+            super().install(including_assets=including_assets)
         with self.state as state:
             state['installed'] = self.select_release().version
 
@@ -801,18 +806,19 @@ class GithubAsset(Installable):
         return title
 
     def download(self, force: bool = False):
-        with self.project.asset_cache:
-            if force or self.needs_download:
-                updated = fetch_if_newer(self.asset_desc['url'], self.cache,
-                                         download_file=self.source,
-                                         message=str(self),
-                                         headers={'Accept': 'application/octet-stream'},
-                                         stream=True)
-                if updated:
-                    self.project.register_installed_file(self.source)
-                return updated
-            else:
-                return False
+        with self.project.asset_cache as cache:
+            if self.asset_desc['url'] not in cache:
+                cache[self.asset_desc['url']] = {}
+
+            updated = fetch_if_newer(self.asset_desc['url'],
+                                     cache[self.asset_desc['url']],
+                                     download_file=self.source,
+                                     message=str(self),
+                                     headers={'Accept': 'application/octet-stream'},
+                                     stream=True)
+            if updated:
+                self.project.register_installed_file(self.source)
+            return updated
 
 
 def get_project(name: str, must_exist: bool = True) -> GitHubProject:      # TODO refactor
