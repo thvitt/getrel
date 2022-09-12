@@ -144,23 +144,25 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                 # now let’s see what we got
                 kind = FileType(asset.source)
                 if kind.executable:
+                    name_candidate = mask_version(asset.source.stem, release_record.version)
+                    if '*' in name_candidate:
+                        name_candidate = project.name
                     if detailed:
-                        if questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
-                                'Should I install it as binary {project.name}?').ask():
+                        if not questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
+                                f'Should I install it as binary {name_candidate}?').ask():
+                            name_candidate = questionary.text('Use a different binary name?',
+                                                   instruction=f'Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
+                    if name_candidate:
+                        if name_candidate == asset.source.stem:
                             asset.configure({'install': 'bin'})
                         else:
-                            bin = questionary.text('Use a different binary name?', instruction='Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
-                            if bin:
-                                asset.configure({'install': {'bin': bin}})
-                    else:
-                        asset.configure({'install': 'bin'})
-                        logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, project.name)
+                            asset.configure({'install': {'bin': name_candidate}})
+                        logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, name_candidate)
                 if not asset.spec.get('install') and kind.archive:
-                    if not detailed or questionary.confirm(f'{asset.source.name} is an archive ({kind.description}). '
-                            'Should I unpack it?').ask():
+                    if not detailed or questionary.confirm(f'{asset.source.name} is an archive. Should I unpack it?').ask():
                         asset.configure({'install': 'unpack'})
                 if not asset.spec.get('install'):
-                    link = questionary.path('Symlink somewhere? You can use ~ and ${VAR}s', only_directories=True).ask()
+                    link = questionary.path(f'Symlink {asset.source.name} somewhere? You can use ~ and ${{VAR}}s', only_directories=True).ask()
                     if link:
                         asset.configure({'install': {'link': link}})
                 logger.debug('Running install for spec %s', asset.spec)
@@ -174,7 +176,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
             executables = [f for (f, t) in unconfigured.items() if t.executable]
             if len(executables) == 1:
                 try:
-                    pattern = identifying_pattern(map(str, project_files), str(executables[0]))
+                    pattern = identifying_pattern(map(str, project_files), str(executables[0]), version=release_record.version, avoid_minimal=True)
                     if 'install' not in project.config:
                         project.config['install'] = {}
                     project.config['install'][pattern] = 'bin'
@@ -428,7 +430,7 @@ class NoPatternError(ValueError):
     ...
 
 
-def identifying_pattern(alternatives: list[str], selection: str, version: Optional[str] = None) -> str:
+def identifying_pattern(alternatives: list[str], selection: str, version: Optional[str] = None, avoid_minimal=False) -> str:
     """
     Given a selection string and a set of alternatives, this function returns a version of selection 
     that replaces all substrings common to all the selection and all alternatives with a '*'. E.g.,
@@ -459,11 +461,7 @@ def identifying_pattern(alternatives: list[str], selection: str, version: Option
                 return False
 
     if version:
-        version_pattern = re.sub(r'\W', '.', version)
-        if version_pattern[0].casefold() == 'v':
-            version_pattern = version_pattern[1:]
-        version_pattern = '[vV]?' + version_pattern
-        versionless = re.sub(version_pattern, '*', selection)
+        versionless = mask_version(selection, version)
         if check_pattern(versionless, exception=False):
             return versionless
 
@@ -479,17 +477,18 @@ def identifying_pattern(alternatives: list[str], selection: str, version: Option
     #     if stem_star != name_star and check_pattern(stem_star):
     #         return stem_star
 
-    # try minimal substrings
-    substring = unique_substrings([selection] + alternatives).get(selection)
-    if substring:
-        pos = selection.index(substring)
-        result = ''
-        if pos == 0:
-            result += '*'
-        result += substring
-        if pos + len(substring) < len(selection):
-            result += '*'
-        return result
+    if not avoid_minimal:
+        # try minimal substrings
+        substring = unique_substrings([selection] + alternatives).get(selection)
+        if substring:
+            pos = selection.index(substring)
+            result = ''
+            if pos == 0:
+                result += '*'
+            result += substring
+            if pos + len(substring) < len(selection):
+                result += '*'
+            return result
 
     # collect common substrings (or rather, character indexes)
     common_idx = set(range(len(selection)))
@@ -511,3 +510,12 @@ def identifying_pattern(alternatives: list[str], selection: str, version: Option
     # assert correctness
 
     return pattern
+
+
+def mask_version(name, version):
+    version_pattern = re.sub(r'\W', '.', version)
+    if version_pattern[0].casefold() == 'v':
+        version_pattern = version_pattern[1:]
+    version_pattern = '[vV]?' + version_pattern
+    versionless = re.sub(version_pattern, '*', name)
+    return versionless
