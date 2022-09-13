@@ -305,7 +305,11 @@ class Installable:
             if check_extra_sources:
                 new_sources.extend(check_extra_sources)
             if self is self.project and including_assets:
-                for asset in self.project.get_assets():
+                assets = self.project.get_assets()
+                if not assets:
+                    logger.warning('Project %s has no assets to install. Maybe rerun %s add %s',
+                                   self.project, config.APP_NAME, self.project.config['url'])
+                for asset in assets:
                     asset.install()
             if hasattr(self, 'source') and self.source is not None:
                 if 'install' in self.spec:
@@ -680,11 +684,16 @@ class GitHubProject(Installable):
     def install(self, including_assets=True, force=False):
         if self.needs_update:
             self.update()
+        release = self.select_release()
+        if release is None:
+            logger.error('No matching release found for project %s. Maybe run %s add %s again',
+                         self, config.APP_NAME, self)
         needs_install = self.download()
         if needs_install or force:
             super().install(including_assets=including_assets)
         with self.state as state:
-            state['installed'] = self.select_release().version
+            if release is not None: # FIXME how can this happen?
+                state['installed'] = release.version
 
     @property
     def needs_install(self):

@@ -118,8 +118,13 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
             # now select the asset(s)
             asset_choices = [asset2choice(a) for a in project.get_assets(release=release_record, configured=False)]
+            if not asset_choices:
+                logger.critical('Release %s of project %s, kind %s has no assets.',
+                                release_record, project, project.config['kind'])
+                return
 
-            selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices).ask()
+            selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices,
+                                                   validate=lambda selection: True if selection else "select at least one asset").ask()
             for asset in project.get_assets():
                 asset.unconfigure()
 
@@ -187,7 +192,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
             edit_project_config(project)
 
-        project.install()
+        project.install(force=True)
     project.save()
 
 
@@ -206,11 +211,12 @@ def update(projects: List[str] = typer.Argument(None)):
 
 @app.command()
 def install(projects: List[str] = typer.Argument(None),
-            update: bool = typer.Option(False, help="update the project state first"),
-            reinstall: bool = typer.Option(False, help="run install even if already installed")):
+            update: bool = typer.Option(False, "-u", "--update", help="update the project state first"),
+            reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed")):
     """Install given or all projects."""
     if not projects:
         projects = edit_projects()
+
     for name in projects:
         project = get_project(name, must_exist=True)
         if update:
@@ -300,15 +306,19 @@ def _remove_directory(directory: Path, force: bool):
                 shutil.rmtree(directory)
 
 @app.command()
-def uninstall(projects: List[str],
+def uninstall(projects: List[str] = typer.Argument(None),
+              all: bool = typer.Option(False, '--all', help="run uninstall for all projects (if no projects given)"),
               remove_config: bool = typer.Option(False, '-c', '--config',  help="Also remove the configuration for the project"),
               remove_status: bool = typer.Option(False, '-s', '--status',  help=f"Also remove {APP_NAME}'s state info for the project"),
               remove_directory: bool = typer.Option(False, '-d', '--directory',  help="Also remove everything within the project directory"),
               yes: bool = typer.Option(False, '-y', '--yes',  help="Assume Yes as answer to all questions")):
     with edit_projects() as settings:
+        if all and not projects:
+            projects = settings.keys()
         for project_name in projects:
             if project_name not in settings:
                 if remove_directory:
+                    logger.debug('Cleaning up stale project directory %s', project_name)
                     _remove_directory(project_directory(project_name), yes)
                     continue
                 elif project_directory(project_name).is_dir():
@@ -318,6 +328,7 @@ def uninstall(projects: List[str],
                     logger.error('Project %s is unknown.', project_name)
                     continue
             project = get_project(project_name)
+            logger.debug('Uninstalling %s', project)
             project.uninstall()
 
             if remove_status:
