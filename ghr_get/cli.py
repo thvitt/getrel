@@ -91,6 +91,58 @@ def asset2choice(asset: GithubAsset) -> questionary.Choice:
     return questionary.Choice(str(asset), value=asset, checked=asset.configured)
 
 
+def _configure_file(project: GitHubProject, source: Path, detailed: bool = False):
+    """
+    Interactively prepares an install rule for the given file or asset.
+    """
+    action = None
+    arg = None
+    kind = FileType(source)
+    if kind.archive:
+        action = "unpack"
+    elif kind.executable:
+        action = "bin"
+
+    filename = project.project_relative_fspath(source)
+
+    action_choices = [
+            questionary.Choice('link   – symlink from somewhere', value='link', shortcut_key='l'),
+            questionary.Choice('bin    – link as command', value='bin', shortcut_key='b'),
+            questionary.Choice('unpack – unpack archive to project directory', value='unpack', shortcut_key='u'),
+            questionary.Choice('delete - remove from project directory', value='delete', shortcut_key='d'),
+            questionary.Choice('(don’t do anything for this file)', value=None, shortcut_key='0')
+            ]
+    choice_by_action = { choice.value : choice for choice in action_choices }
+
+    action = questionary.select(f"What should be done with {filename} ({kind.description})?",
+                                action_choices, use_shortcuts=True, use_arrow_keys=True, default=choice_by_action.get(action)).ask()
+
+    if action == "bin":
+        name_candidate = mask_version(source.stem, project.select_release().version)
+        if '*' in name_candidate or len(project.name) < len(name_candidate):   # FIXME solution for avoiding overwriting
+            name_candidate = project.name
+
+        name_candidate = questionary.text(f'Link {filename} as binary: ',
+                                          default=name_candidate,
+                                          #instruction='Enter a simple name for a link in ~/.local/bin, '
+                                          #            'give a path for a different location. '
+                                          #            '~ and variables will be expanded.'
+                                          ).ask()
+        if name_candidate != source.stem:
+            arg = name_candidate
+    elif action == "link":
+        arg = questionary.path(f"Link {filename} from: ", validate=lambda p: p != '').ask()
+    elif action is None:
+        return None
+
+    if arg is None:
+        return action
+    else:
+        t = tomlkit.inline_table()
+        t.update({action: arg})
+        return t
+
+
 @app.command()
 def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                                                 help="ask even if we have a heuristic")):
@@ -144,51 +196,28 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                             instruction=f'edit/accept pattern for {asset_name}').ask()
                 else:
                     logger.info('Asset pattern for %s: %s', asset_name, pattern)
-                asset.configure({'match': pattern})
+                asset.configure({'match': pattern})         # FIXME switch to new syntax
                 asset.download()
-                # now let’s see what we got
-                kind = FileType(asset.source)
-                if kind.executable:
-                    name_candidate = mask_version(asset.source.stem, release_record.version)
-                    if '*' in name_candidate:
-                        name_candidate = project.name
-                    if detailed:
-                        if not questionary.confirm(f'{asset.source.name} seems to be an executable ({kind.description}). '
-                                f'Should I install it as binary {name_candidate}?').ask():
-                            name_candidate = questionary.text('Use a different binary name?',
-                                                   instruction=f'Enter name relative to {Path.home() / ".local/bin"} or leave empty if it should not be installed').ask()
-                    if name_candidate:
-                        if name_candidate == asset.source.stem:
-                            asset.configure({'install': 'bin'})
-                        else:
-                            asset.configure({'install': {'bin': name_candidate}})
-                        logger.info('Configured %s (%s) to be installed as binary %s', asset.spec['match'], asset.source, name_candidate)
-                if not asset.spec.get('install') and kind.archive:
-                    if not detailed or questionary.confirm(f'{asset.source.name} is an archive. Should I unpack it?').ask():
-                        asset.configure({'install': 'unpack'})
-                if not asset.spec.get('install'):
-                    link = questionary.path(f'Symlink {asset.source.name} somewhere? You can use ~ and ${{VAR}}s', only_directories=True).ask()
-                    if link:
-                        asset.configure({'install': {'link': link}})
-                logger.debug('Running install for spec %s', asset.spec)
-                asset.install()
+                config = _configure_file(project, asset.source, detailed)
+                if config is None:
+                    asset.unconfigure()
+                else:
+                    asset.configure({'install': config})
+                    asset.install()
 
-            console.print(file_table(project, title="Installed Files", show_header=True, include_type=True))
-
-            # now we've installed and configured the assets – let's look for other unconfigured files.
             project_files = {f: FileType(f.path) for f in project.get_installed() if not f.external}
-            unconfigured = {f: t for (f, t) in project_files.items() if not f.install}
-            executables = [f for (f, t) in unconfigured.items() if t.executable]
-            if len(executables) == 1:
-                try:
-                    pattern = identifying_pattern(map(str, project_files), str(executables[0]), version=release_record.version, avoid_minimal=True)
+            unconfigured = {f: t for (f, t) in project_files.items() if not f.asset}
+            choices = [questionary.Choice(title=f"{f} ({t})", value=f, checked=t.executable) for (f, t) in unconfigured.items()]
+            if choices:
+                selected = questionary.checkbox('Which of these additional files should be installed?', choices=choices).ask()
+                for file in selected:
+                    action = _configure_file(project, file.path, detailed)
+                    if action:
+                        pattern = identifying_pattern(map(str, project_files), str(file),
+                                                      version=release_record.version, avoid_minimal=True)
                     if 'install' not in project.config:
                         project.config['install'] = {}
-                    project.config['install'][pattern] = 'bin'
-                    del unconfigured[executables[0]]
-                    console.print(f'Configured [bold]{pattern}[/bold] to be installed as command [bold]{project.name}[/bold]')
-                except NoPatternError:
-                    logging.warning('Could not generate pattern for %s, leaving for manual config', executables[0])
+                    project.config['install'][pattern] = action
 
             edit_project_config(project)
 
@@ -272,6 +301,9 @@ def _select_release(project, detailed):
         default_release_choice = first(c for c in choices if fnmatch.fnmatch(c.value, configured_release))
     else:
         default_release_choice = None
+    if not choices:
+        logger.critical('The project %s at %s does not have any releases.', project, project.config['url'])
+        sys.exit(1)
     selected = questionary.select('Which release would you like to use', choices,
                                   default=default_release_choice,
                                   use_arrow_keys=True, use_shortcuts=True).ask()

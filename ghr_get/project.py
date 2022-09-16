@@ -85,6 +85,7 @@ class ProjectFile:
         return self.project.project_relative_fspath(self.path)
 
 
+
 class GitHubRelease(Release):
 
     def __init__(self, release_record: Mapping):
@@ -152,10 +153,13 @@ class Installable:
         """
         assert self.source is not None
         link = config.expand_path(arg, self.project.name, asset=self.source.name)
+        if str(arg).endswith('/') or link.is_dir():
+            link = link / self.source.name
         if link.is_symlink():
             logger.warning('Overwriting link %s (which pointed to %s) with %s',
                            link, link.readlink(), self.source)
             link.unlink()
+        link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(self.source.absolute())     # FIXME can we use 'intelligent' relative links here, cf. fetchlink?
         self.project.register_installed_file(link)
         logger.info('Linked %s from %s', self.source, link)
