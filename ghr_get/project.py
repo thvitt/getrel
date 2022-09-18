@@ -12,6 +12,8 @@ import tarfile
 from pathlib import Path
 from typing import Optional, Any
 
+import tomlkit
+
 from .config import BaseSettings
 from . import config
 from .utils import naturalsize, first, fetch_if_newer
@@ -48,7 +50,7 @@ class ProjectFile:
     project: "GitHubProject"
     path: Path
     asset: Optional["GithubAsset"] = None
-    install: Optional[Mapping] = None
+    install_spec: Optional[Mapping] = None
     external: bool = False
 
     def __init__(self, project: "GitHubProject", file: Path | str):
@@ -67,12 +69,12 @@ class ProjectFile:
                     self.asset = asset
                     break
 
-        if self.asset and 'install' in self.asset.spec:
-            self.install = self.asset.spec['install']
+        if self.asset and self.asset.install_spec:
+            self.install_spec = self.asset.install_spec
         elif not self.external and 'install' in project.config:
             for pattern, action in project.config['install'].items():
                 if fnmatch(project.project_relative_fspath(self.path), pattern):
-                    self.install = action
+                    self.install_spec = action
                     break
 
     def __hash__(self):
@@ -138,12 +140,12 @@ class Installable:
 
     project: "GitHubProject"  # FIXME
     source: Optional[Path]
-    spec: Any
+    install_spec: Any
 
     def __init__(self, project: "GitHubProject", source: Optional[Path], spec: Any):
         self.project = project
         self.source = source
-        self.spec = spec
+        self.install_spec = spec
 
     def link(self, arg):
         """
@@ -316,11 +318,11 @@ class Installable:
                 for asset in assets:
                     asset.install()
             if hasattr(self, 'source') and self.source is not None:
-                if 'install' in self.spec:
-                    logger.debug('Running install rule %s for %s', self.spec['install'], self.source)
-                    new_sources.extend(self._run_actions(self.spec['install']))
+                if self.install_spec:
+                    logger.debug('Running install rule %s for %s', self.install_spec, self.source)
+                    new_sources.extend(self._run_actions(self.install_spec))
                 elif not new_sources:
-                    logger.warning('No install configuration in spec %s and no extra sources found', self.spec)
+                    logger.warning('No install configuration and no extra sources found', self.install_spec)
 
             project_spec = self.project.config.get('install', {})
             while new_sources:
@@ -334,7 +336,7 @@ class Installable:
                         new_sources.extend(installable._run_actions(spec))
 
     def __repr__(self):
-        return f'<{self.__class__.__name} source={self.source} spec={self.spec!r}>'
+        return f'<{self.__class__.__name__} source={self.source} match={self.match} install="{self.install_spec!r}">'
 
 
 class GitHubProject(Installable):
@@ -631,46 +633,21 @@ class GitHubProject(Installable):
         if release is None:
             return result
         if configured:
-            for spec in self.config.get('assets', []):
-                matching_descs = [asset for asset in release.data['assets'] if fnmatch(asset['name'], spec['match'])]
+            for pattern, install in self.config.get('assets', {}).items():
+                matching_descs = [asset for asset in release.data['assets'] if fnmatch(asset['name'], pattern)]
                 if len(matching_descs) == 0:
-                    logger.warning('%s %s: No asset matching %s found', self.name, release, spec['match'])
+                    logger.warning('%s %s: No asset matching %s found', self.name, release, pattern)
                 else:
-                    result.append(GithubAsset(self, release, spec, matching_descs[0]))
+                    result.append(GithubAsset(self, release, pattern, install, matching_descs[0]))
                     if len(matching_descs) > 1:
                         logger.warning(
                             '%s %s: %d assets match %s (%s). This is not supported, arbitrarily using the first one.',
-                            self.name, release, len(matching_descs), spec,
+                            self.name, release, len(matching_descs), pattern,
                             ', '.join(a['name'] for a in matching_descs))
         else:
             for desc in release.data['assets']:
-                result.append(GithubAsset(self, release, None, desc))
+                result.append(GithubAsset(self, release, None, None, desc))
         return result
-
-    def configure_asset(self, asset: "GithubAsset"):
-        """Adds or updates the configuration for the given asset in this project."""
-        if 'assets' not in self.config:
-            self.config['assets'] = []
-        assets = self.config['assets']
-        assert asset.spec is not None, 'Cannot add an unconfigured asset'
-        pattern = asset.spec['match']
-        existing_spec = first((a for a in assets if a['match'] == pattern), default=None)
-        if existing_spec:
-            existing_spec.update(asset.spec)
-            asset.spec = existing_spec
-        else:
-            assets.append(asset.spec)
-            asset.spec = assets[-1]
-
-    def unconfigure_asset(self, asset: "GithubAsset"):
-        if asset.spec is None:
-            logger.debug('Asset %s is unconfigured, no need to remove it', asset)
-        else:
-            assets = self.config['assets']
-            pattern = asset.spec['match']
-            existing_spec = first((a for a in assets if a['match'] == pattern), default=None)
-            if existing_spec:
-                assets.remove(existing_spec)
 
     def download(self):
         if self.needs_update:
@@ -756,13 +733,17 @@ class GitHubProject(Installable):
 class GithubAsset(Installable):
     project: GitHubProject
     release: str
-    spec: MutableMapping | None
+    install_spec: MutableMapping | None
     asset_desc: Mapping
     cache: MutableMapping
     needs_download: bool
     source: Path
 
-    def __init__(self, project: GitHubProject, release: Release, spec: MutableMapping | None, asset_desc: Mapping) -> None:
+    def __init__(self, project: GitHubProject, release: Release,
+                 #spec: MutableMapping | None,
+                 match: Optional[str] = None,
+                 install: str | Mapping | None = None,
+                 asset_desc: Mapping | None = None) -> None:
         """
         Each asset is associated with:
             - the current project
@@ -772,43 +753,48 @@ class GithubAsset(Installable):
         """
         self.project = project
         self.release = release
-        self.spec = spec
-        if spec is None and 'assets' in project.config:
-            self.spec = first((a for a in project.config['assets'] if fnmatch(asset_desc['name'], a['match'])), default=None)
+        self.match = match
+        self.install_spec = install
+        if match is None and 'assets' in project.config:
+            self.match = first((a for a in project.config['assets'] if fnmatch(asset_desc['name'], a)), default=None)
+            if self.match is not None:
+                self.install = project.config['assets'][self.match]
         self.asset_desc = asset_desc
         self.source = config.project_directory(self.project.name) / self.asset_desc['name']
 
     @property
     def configured(self):
-        return self.spec is not None
+        return self.install_spec is not None
 
-    def configure(self, spec: MutableMapping | None = None, **kwargs):
+    def configure(self, match: str | None = None, install: str | Mapping | None = None):
         """
         Adds or updates the asset's configuration in the project.
         """
-        if spec is None and kwargs:
-            spec.update(kwargs)
-        if self.spec is None:
-            if spec is None:
-                raise ValueError('Asset is not configured, need a spec')
+        if 'assets' not in self.project.config:
+            self.project.config['assets'] = {}
+        if match:
+            if self.match and match != self.match:
+                del self.project.config['assets'][self.match]
+            self.match = match
+        if install:
+            if isinstance(install, Mapping):
+                self.install_spec = tomlkit.inline_table()
+                self.install_spec.update(install)
             else:
-                self.spec = spec
-                self.project.configure_asset(self)
-        else:
-            if spec:
-                self.spec.update(spec)
+                self.install_spec = install
+        self.project.config['assets'][self.match] = self.install_spec or 'register'
 
-        logger.debug(self.spec)
-
-        if self.spec['match'] not in self.project.asset_cache:
-            self.project.asset_cache[self.spec['match']] = {}
-        self.cache = self.project.asset_cache[self.spec['match']]  # type: ignore
+        if self.match not in self.project.asset_cache:
+            self.project.asset_cache[self.match] = {}
+        self.cache = self.project.asset_cache[self.match]  # type: ignore
         self.needs_download = self.release != self.cache.get('release')  # type: ignore
-        logger.debug('Configured spec=%s for asset %s', self.spec, self)
+
+        logger.debug('%s: configured %s = %s', self.project, self.match, self.install_spec)
 
     def unconfigure(self):
-        self.project.unconfigure_asset(self)
-        self.spec = None
+        if self.match in self.project.config.get('assets', {}):
+            del self.project.config['assets'][self.match]
+        self.match = self.install_spec = None
 
     def __str__(self):
         asset = self.asset_desc

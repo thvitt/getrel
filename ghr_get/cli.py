@@ -196,13 +196,13 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                             instruction=f'edit/accept pattern for {asset_name}').ask()
                 else:
                     logger.info('Asset pattern for %s: %s', asset_name, pattern)
-                asset.configure({'match': pattern})         # FIXME switch to new syntax
+                asset.configure(match=pattern)
                 asset.download()
                 config = _configure_file(project, asset.source, detailed)
                 if config is None:
                     asset.unconfigure()
                 else:
-                    asset.configure({'install': config})
+                    asset.configure(install=config)
                     asset.install()
 
             project_files = {f: FileType(f.path) for f in project.get_installed() if not f.external}
@@ -392,12 +392,12 @@ def file_table(project: GitHubProject, include_type=False, **kwargs):
         table.add_column('File Type')
     for file in project.get_installed():
         cells = [str(file),
-                      str(file.install) if file.install else '',
+                      str(file.install_spec) if file.install_spec else '',
                       'A' if file.asset else '',
                       'X' if file.external else '']
         if include_type:
             cells.append(str(FileType(file.path)))
-        table.add_row(*cells, style='bold' if file.external else 'dim' if file.install else '')
+        table.add_row(*cells, style='bold' if file.external else 'dim' if file.install_spec else '')
     return table
 
 
