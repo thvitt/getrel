@@ -183,8 +183,12 @@ def edit_projects() -> Settings:
     return Settings(xdg.xdg_config_home() / APP_NAME / 'projects.toml')
 
 
-def project_directory(project_name: str) -> Path:
-    return xdg.xdg_data_home() / APP_NAME / project_name
+def project_directory(project_name: str | None = None) -> Path:
+    root = xdg.xdg_data_home() / APP_NAME
+    if project_name:
+        return root / project_name
+    else:
+        return root
 
 
 def project_state_directory(project_name: str, create=False) -> Path:

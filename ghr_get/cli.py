@@ -16,6 +16,7 @@ from pygments.lexers.configs import TOMLLexer
 from rich.live import Live
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from .project import GitHubProject, GithubAsset, get_project
 import questionary
@@ -468,6 +469,53 @@ def pd(project_name: str, command: List[str] = typer.Argument(None, help="Comman
                     sys.exit(result.returncode)
     except Exception as e:
         logger.error('Failed to run command %s for project %s: %s', ' '.join(command) or 'pd', project_name, e)
+
+
+@app.command()
+def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all questions")):
+    """
+    Remove broken configuration or files.
+    """
+
+    # look through the configuration file
+    with edit_projects() as projects:
+        for name, project_config in list(projects.items()):
+            valid = True
+            try:
+                project = get_project(name)
+            except Exception as e:
+                logger.error('Project %s cannot be instantiated (%s)', name, e)
+                valid = False
+            if 'assets' not in project_config or not project_config['assets']:
+                logger.error('Project %s has no assets', name)
+                valid = False
+
+            if not valid:
+                console.print(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
+                if yes or questionary.confirm('Delete the project config (above)?').ask():
+                    del projects[name]
+                    logger.warning('Removed invalid config for %s', name)
+
+        # look for stale directories
+        for project_path in list(project_directory().iterdir()):
+            if project_path.name not in projects:
+                logger.error('No project config for %s: probably stale project', project_path)
+                console.print(dir_tree(project_path))
+                if yes or questionary.confirm('Remove that project tree?').ask():
+                    shutil.rmtree(project_path)
+                    logger.warning('Removed stale project directory %s', project_path)
+
+
+def dir_tree(file: Path, parent: Tree | None = None) -> Tree:
+    if parent is None:
+        t = Tree(str(file))
+    else:
+        t = parent.add(file.name)
+    if file.is_dir():
+        for entry in file.iterdir():
+            dir_tree(entry, t)
+    return t
+
 
 class NoPatternError(ValueError):
     ...
