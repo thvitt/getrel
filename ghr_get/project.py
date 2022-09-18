@@ -447,6 +447,7 @@ class GitHubProject(Installable):
         return [ProjectFile(self, f) for f  in self.installed_files]
 
     def uninstall(self, keep_assets=False):
+        count = 0
         with self.use_directory():
             parents = set()
             for project_file in sorted(self.get_installed(), key=lambda pf: len(pf.path.parts), reverse=True):
@@ -456,8 +457,10 @@ class GitHubProject(Installable):
                             parents.add(project_file.path.parent)
                         if project_file.path.is_dir():
                             project_file.path.rmdir()
+                            count += 1
                         elif project_file.path.is_symlink() or project_file.path.exists():
                             project_file.path.unlink()
+                            count += 1
                             logger.debug('uninstalled %s', project_file)
                         else:
                             logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op', project_file, self)
@@ -469,11 +472,13 @@ class GitHubProject(Installable):
             try:
                 if parent.exists() and parent != self.directory:
                     parent.rmdir()
+                    count += 1
             except IOError as e:
                 logger.info('Keeping non-empty directory %s', parent)
         # persist changed state
         self.state['installed'] = None
         self.save()
+        logger.info('Removed %d files and directories of project %s, %s assets', count, self, 'keeping' if keep_assets else 'including')
 
 
     _directory: Optional[Path] = None

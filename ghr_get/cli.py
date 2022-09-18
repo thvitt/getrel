@@ -242,7 +242,9 @@ def update(projects: List[str] = typer.Argument(None)):
 @app.command()
 def install(projects: List[str] = typer.Argument(None),
             update: bool = typer.Option(False, "-u", "--update", help="update the project state first"),
-            reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed")):
+            reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed"),
+            uninstall: bool = typer.Option(False, "-U", "--uninstall", help="uninstall first if it is installed"),
+            ):
     """Install given or all projects."""
     if not projects:
         projects = edit_projects()
@@ -251,6 +253,8 @@ def install(projects: List[str] = typer.Argument(None),
         project = get_project(name, must_exist=True)
         if update:
             project.update()
+        if uninstall and project.get_installed():
+            project.uninstall()
         if reinstall or project.needs_install:
             project.install(force=reinstall)
 
