@@ -1,4 +1,5 @@
 import os
+import platform
 import re
 import sys
 import shutil
@@ -23,7 +24,7 @@ import questionary
 from difflib import SequenceMatcher
 import fnmatch
 from itertools import chain
-from .utils import FileType, first, unique_substrings
+from .utils import FileType, first, unique_substrings, shorten_list
 from .config import edit_projects, APP_NAME, project_directory, project_state_directory
 
 import logging
@@ -175,6 +176,14 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                 logger.critical('Release %s of project %s, kind %s has no assets.',
                                 release_record, project, project.config['kind'])
                 return
+
+            if sum(c.checked for c in asset_choices) == 0:
+                # Try to guess and preselect a sensible subset of asset choices
+                preselected_assets = shorten_list(asset_choices, lambda choice: platform.system().casefold() in choice.value.source.name.casefold())
+                preselected_assets = shorten_list(preselected_assets, lambda choice: platform.machine().casefold() in choice.value.source.name.casefold())
+                if len(preselected_assets) <= 3 and len(preselected_assets) != len(asset_choices):
+                    for c in preselected_assets:
+                        c.checked = True
 
             selected_assets = questionary.checkbox('Which asset(s) should be downloaded?', asset_choices,
                                                    validate=lambda selection: True if selection else "select at least one asset").ask()

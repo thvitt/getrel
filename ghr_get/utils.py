@@ -1,6 +1,6 @@
 from pathlib import Path
 from tarfile import is_tarfile
-from typing import TypeVar, Iterable, MutableMapping
+from typing import TypeVar, Iterable, MutableMapping, Sequence, Callable
 import stat
 from mimetypes import guess_type
 from typing import Optional
@@ -226,3 +226,11 @@ def unique_substrings(strings: Iterable[str]) -> dict[str, str]:
             if string not in unique or len(unique[string]) > len(candidate):
                 unique[string] = candidate
     return unique
+
+
+def shorten_list(source: Sequence[T], predicate: Callable[[T], bool], min_items: int = 1) -> Sequence[T]:
+    result = [item for item in source if predicate(item)]
+    if len(result) < min_items:
+        return source
+    else:
+        return result
