@@ -80,8 +80,6 @@ For all actions, the source will be matched using shell glob patterns and the _a
 
 ### Installation scripts and commands
 
-For each project, you can add a single optional `postinstall` and a single optional `uninstall` key. The values must be strings. If a value begins with `#!`, the string is written to a temporary file, which will then be made executable and executed. Otherwise, the value will be run as a single shell command. Either way, the script / command will be executed within the project directory and have access to the additional environment variable PROJECT and PROJECT_DIR with the name and directory of the project.
+For each project, you can add a single optional `postinstall` and a single optional `uninstall` key. The values must be strings. If a value begins with `#!`, the string is written to a temporary file, which will then be made executable and executed. Otherwise, the value will be run as a single shell command. Either way, the script / command will be executed within the project directory and have access to the additional environment variable PROJECT and PROJECT_DIR with the name and directory of the project. The scripts are not intended for being interactive, their output is captured.
 
-The `postinstall` script, if given, is run after each of the other install actions have been run. The `uninstall` script is run on _uninstall_, before any of the installed files will be deleted.
-
-
+The `postinstall` script, if given, is run after each of the other install actions have been run. If it creates any files, it should write the file paths to stdout, one per line, and they will be added to the list of installed files (which will later be uninstalled). The `uninstall` script is run on _uninstall_, before any of the installed files will be deleted.

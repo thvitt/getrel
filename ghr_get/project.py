@@ -161,6 +161,10 @@ class Installable:
             logger.warning('Overwriting link %s (which pointed to %s) with %s',
                            link, link.readlink(), self.source)
             link.unlink()
+        elif link.exists():
+            logger.error('%s: Refusing to overwrite %s with %s', self.project, link, self.source)
+            return []
+
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(self.source.absolute())     # FIXME can we use 'intelligent' relative links here, cf. fetchlink?
         self.project.register_installed_file(link)
@@ -677,6 +681,13 @@ class GitHubProject(Installable):
         needs_install = self.download()
         if needs_install or force:
             super().install(including_assets=including_assets)
+            if 'postinstall' in self.config:
+                logger.debug('Running postinstall script for %s:\n%s', self.project, self.config['postinstall'])
+                new_files = []
+                self.exec_script(self.config['postinstall'], new_files, capture=True)
+                if new_files:
+                    self.register_installed_file(*new_files)
+
         with self.state as state:
             if release is not None: # FIXME how can this happen?
                 state['installed'] = release.version
@@ -689,7 +700,7 @@ class GitHubProject(Installable):
     def needs_update(self):
         return not self.state.get('updated')
 
-    def exec_script(self, script: str, record_new_files: Optional[list] = None) -> int:
+    def exec_script(self, script: str, record_new_files: Optional[list] = None, capture: bool = False) -> int:
         """
         Executes the given script.
 
@@ -701,13 +712,17 @@ class GitHubProject(Installable):
         if record_new_files is a list, new files _in the project directory_ will be recorded and added to
         the list. Files created by the script outside the project directory will never be detected.
 
+        If capture is true, stdin and stdout will be captured. Each line written to stdin will be considered
+        a file path and will be added to record_new_files. stderr, if non-empty, will be logged at
+        'info' or 'error' level, depending on the process's return code.
+
         Returns:
             the script's exit code
         """
         from subprocess import run
         from tempfile import NamedTemporaryFile
 
-        with self.directory as project_directory:
+        with self.use_directory() as project_directory:
             if record_new_files is not None:
                 files_before = set(project_directory.glob('**/*'))
             else:
@@ -721,15 +736,21 @@ class GitHubProject(Installable):
                     scriptpath = Path(scriptfile.name)
                 try:
                     scriptpath.chmod(0o700)
-                    result = run([scriptpath], env=project_env, cwd=project_directory)
+                    result = run([scriptpath], env=project_env, cwd=project_directory, capture_output=capture, text=True)
                 finally:
                     scriptpath.unlink()
             else:
-                result = run(script, shell=True, env=project_env, cwd=project_directory)
+                result = run(script, shell=True, env=project_env, cwd=project_directory, capture_output=capture, text=True)
             if record_new_files is not None:
                 files_after = set(project_directory.glob('**/*'))
                 new_files = files_after - files_before
                 record_new_files.extend(new_files)
+
+                if capture:
+                    captured_files = [Path(line) for line in result.stdout.split('\n') if line]
+                    record_new_files.extend([path for path in captured_files if path.exists()])
+            if capture and result.stderr:
+                logger.log(logging.INFO if result.returncode == 0 else logging.ERROR, result.stderr)
             return result.returncode
 
     def __str__(self):
