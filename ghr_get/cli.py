@@ -111,7 +111,7 @@ def _configure_file(project: GitHubProject, source: Path, detailed: bool = False
             questionary.Choice('bin    – link as command', value='bin', shortcut_key='b'),
             questionary.Choice('unpack – unpack archive to project directory', value='unpack', shortcut_key='u'),
             questionary.Choice('delete - remove from project directory', value='delete', shortcut_key='d'),
-            questionary.Choice('(don’t do anything for this file)', value=None, shortcut_key='0')
+            questionary.Choice('(don’t do anything for this file)', value='', shortcut_key='0')
             ]
     choice_by_action = { choice.value : choice for choice in action_choices }
 
@@ -133,7 +133,7 @@ def _configure_file(project: GitHubProject, source: Path, detailed: bool = False
             arg = name_candidate
     elif action == "link":
         arg = questionary.path(f"Link {filename} from: ", validate=lambda p: p != '').ask()
-    elif action is None:
+    elif not action:
         return None
 
     if arg is None:
@@ -201,7 +201,8 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                 asset.download()
                 config = _configure_file(project, asset.source, detailed)
                 if config is None:
-                    asset.unconfigure()
+                    if asset:
+                        asset.unconfigure()
                 else:
                     asset.configure(install=config)
                     asset.install()
@@ -220,9 +221,12 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
                         project.config['install'] = {}
                     project.config['install'][pattern] = action
 
-            edit_project_config(project)
+            #edit_project_config(project)
+            console.print(Syntax(tomlkit.dumps({project.name : project.config}), 'toml'))
 
         project.install(force=True)
+
+        console.print(file_table(project, include_type=True))
     project.save()
 
 
@@ -456,7 +460,7 @@ def edit():
     subprocess.run([editor_cmd, os.fspath(projects.store)])
     if projects.store.stat().st_mtime > last_modified:
         projects.load()
-        list_()
+        list_([])
 
 @app.command()
 def pd(project_name: str, command: List[str] = typer.Argument(None, help="Command to run in the project directory")):
@@ -481,9 +485,15 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
     Remove broken configuration or files.
     """
 
+    project_count = 0
+    valid_projects = 0
+    directories = 0
+    rm_directories = 0
+
     # look through the configuration file
     with edit_projects() as projects:
         for name, project_config in list(projects.items()):
+            project_count += 1
             valid = True
             try:
                 project = get_project(name)
@@ -499,15 +509,22 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
                 if yes or questionary.confirm('Delete the project config (above)?').ask():
                     del projects[name]
                     logger.warning('Removed invalid config for %s', name)
+            else:
+                valid_projects += 1
 
         # look for stale directories
         for project_path in list(project_directory().iterdir()):
+            directories += 1
             if project_path.name not in projects:
                 logger.error('No project config for %s: probably stale project', project_path)
                 console.print(dir_tree(project_path))
                 if yes or questionary.confirm('Remove that project tree?').ask():
                     shutil.rmtree(project_path)
                     logger.warning('Removed stale project directory %s', project_path)
+                    rm_directories += 1
+
+    logger.info('%d of %d projects had no problems. Removed %d of %d project directories.',
+                valid_projects, project_count, rm_directories, directories)
 
 
 def dir_tree(file: Path, parent: Tree | None = None) -> Tree:

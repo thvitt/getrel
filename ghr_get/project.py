@@ -763,7 +763,7 @@ class GithubAsset(Installable):
         if match is None and 'assets' in project.config:
             self.match = first((a for a in project.config['assets'] if fnmatch(asset_desc['name'], a)), default=None)
             if self.match is not None:
-                self.install = project.config['assets'][self.match]
+                self.install_spec = project.config['assets'][self.match]
         self.asset_desc = asset_desc
         self.source = config.project_directory(self.project.name) / self.asset_desc['name']
 
@@ -797,7 +797,7 @@ class GithubAsset(Installable):
         logger.debug('%s: configured %s = %s', self.project, self.match, self.install_spec)
 
     def unconfigure(self):
-        if self.match in self.project.config.get('assets', {}):
+        if self.match and self.match in self.project.config.get('assets', {}):
             del self.project.config['assets'][self.match]
         self.match = self.install_spec = None
 
