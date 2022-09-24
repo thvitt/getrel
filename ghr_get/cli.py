@@ -658,6 +658,42 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
                 valid_projects, project_count, rm_directories, directories)
 
 
+@app.command()
+def rename(project_name: str, new_name: str):
+    """
+    Rename the project.
+
+    This command uninstalls the project (keeping assets, so no redownload neccessary), changes the project configuration,
+    moves the project directory and reinstalls the project. This is the only way to consistently rename an installed project,
+    modifying the config file directly will only work with completely uninstalled projects.
+    """
+    project = get_project(project_name, must_exist=True)
+    if new_name in edit_projects():
+        existing_project = get_project(new_name)
+        logger.critical('Project %s already exists (%s), cannot rename %s to it', new_name, existing_project.config['url'], project_name)
+        return 1
+
+    installed = project.state.get('installed')
+    if installed:
+        project.uninstall(keep_assets=True)
+    project.save()
+    canonical_name = project.name
+    del project
+
+    with edit_projects() as projects:
+        settings = projects[canonical_name]
+        del projects[canonical_name]
+        projects[new_name] = settings
+
+    project_dir = project_directory(canonical_name)
+    project_dir.rename(project_dir.with_name(new_name))
+
+    new_project = get_project(new_name)
+    if installed:
+        new_project.install()
+
+
+
 def dir_tree(file: Path, parent: Tree | None = None) -> Tree:
     if parent is None:
         t = Tree(str(file))
