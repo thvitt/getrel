@@ -642,6 +642,14 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
                     logger.warning('Removed invalid config for %s', name)
             else:
                 valid_projects += 1
+                unknown_files = [f for f in project.get_installed(include_unknown=True) if f.unregistered]
+                if unknown_files:
+                    if logger.isEnabledFor(logging.INFO) or not yes:
+                        ls([project.name], ignore_boring=False, show_details=False)
+                    if yes or questionary.confirm(f'{project}’s directory contains unregistered files (marked ? above). Remove them?').ask():
+                        for file in unknown_files:
+                            file.path.unlink(missing_ok=True)
+                        logger.info('Removed %d unknown files in project directory %s', len(unknown_files), project.name)
 
         # look for stale directories
         for project_path in list(project_directory().iterdir()):

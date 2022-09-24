@@ -62,7 +62,7 @@ class ProjectFile:
 
         for asset in project.get_assets():
             try:
-                if self.path.samefile(asset.source):
+                if self.path.absolute() == asset.source.absolute():
                     self.asset = asset
                     break
             except OSError:
@@ -466,19 +466,20 @@ class GitHubProject(Installable):
             parents = set()
             for project_file in sorted(self.get_installed(), key=lambda pf: len(pf.path.parts), reverse=True):
                 try:
-                    if not keep_assets or not project_file.asset:
-                        if project_file.path.parent.is_relative_to(self.directory):
-                            parents.add(project_file.path.parent)
-                        if project_file.path.is_dir():
-                            project_file.path.rmdir()
-                            count += 1
-                        elif project_file.path.is_symlink() or project_file.path.exists():
-                            project_file.path.unlink()
-                            count += 1
-                            logger.debug('uninstalled %s', project_file)
-                        else:
-                            logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op', project_file, self)
-                        self.unregister_installed_file(project_file.path)
+                    if keep_assets and project_file.asset:
+                        continue
+                    if project_file.path.parent.is_relative_to(self.directory):
+                        parents.add(project_file.path.parent)
+                    if project_file.path.is_dir():
+                        project_file.path.rmdir()
+                        count += 1
+                    elif project_file.path.is_symlink() or project_file.path.exists():
+                        project_file.path.unlink()
+                        count += 1
+                        logger.debug('uninstalled %s', project_file)
+                    else:
+                        logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op', project_file, self)
+                    self.unregister_installed_file(project_file.path)
                 except IOError as e:
                     logger.error('Unable to delete %s (%s) while uninstalling %s', project_file, e, self)
         # now cleanup empty directories
@@ -692,7 +693,7 @@ class GitHubProject(Installable):
             logger.error('No matching release found for project %s. Maybe run %s add %s again',
                          self, config.APP_NAME, self)
         needs_install = self.download()
-        if needs_install or force:
+        if needs_install or force or not self.state.get('installed'):
             super().install(including_assets=including_assets)
             if 'postinstall' in self.config:
                 logger.debug('Running postinstall script for %s:\n%s', self.project, self.config['postinstall'])
