@@ -5,21 +5,25 @@ import sys
 import shutil
 import subprocess
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Collection, Optional, List
 
+import humanize
 import rich.table
+from humanize import naturaltime
 from prompt_toolkit.document import Document
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.validation import ValidationError, Validator
 import typer
 from pygments.lexers.configs import TOMLLexer
 from rich.live import Live
+from rich.markup import render
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
-from .project import GitHubProject, GithubAsset, get_project
+from .project import GitHubProject, GithubAsset, get_project, ProjectFile
 import questionary
 from difflib import SequenceMatcher
 import fnmatch
@@ -40,24 +44,29 @@ config.console = console
 FORMAT = "%(message)s"
 log_handler = RichHandler(console=console, show_time=False, rich_tracebacks=False)
 logging.basicConfig(
-    level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[log_handler]
+        level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[log_handler]
 )
 logger = logging.getLogger(__name__)
 app = typer.Typer(pretty_exceptions_enable=False)
 
-@app.callback()
-def initialize(verbose: int = typer.Option(0, '--verbose', '-v', count=True, help="more messages", show_default=False, show_choices=False),
-               quiet: int = typer.Option(0, '--quiet', '-q', count=True, help="less messages", show_default=False, show_choices=False)):
+@app.callback(invoke_without_command=True)
+def initialize(ctx: typer.Context,
+               verbose: int = typer.Option(0, '--verbose', '-v', count=True, help="more messages", show_default=False, show_choices=False),
+               quiet: int = typer.Option(0, '--quiet', '-q', count=True, help="less messages", show_default=False, show_choices=False),
+               ):
     log_level = min(logging.CRITICAL, max(0, logging.WARNING + (10 * (quiet - verbose))))
     log_handler.setLevel(log_level)
+    if not ctx.invoked_subcommand:
+        app(['status'])
+
 
 
 class FNMatchValidator(Validator):
 
     def __init__(self, candidates: Collection[str] = tuple(), *,
-                       must_match: Optional[str]=None, 
-                       max_matches: Optional[int] = None,
-                       min_matches: Optional[int] = None):
+                 must_match: Optional[str]=None,
+                 max_matches: Optional[int] = None,
+                 min_matches: Optional[int] = None):
         super().__init__()
         self.candidates = list(candidates or [])
         self.must_match = must_match
@@ -108,12 +117,12 @@ def _configure_file(project: GitHubProject, source: Path, detailed: bool = False
     filename = project.project_relative_fspath(source)
 
     action_choices = [
-            questionary.Choice('link   – symlink from somewhere', value='link', shortcut_key='l'),
-            questionary.Choice('bin    – link as command', value='bin', shortcut_key='b'),
-            questionary.Choice('unpack – unpack archive to project directory', value='unpack', shortcut_key='u'),
-            questionary.Choice('delete - remove from project directory', value='delete', shortcut_key='d'),
-            questionary.Choice('(don’t do anything for this file)', value='', shortcut_key='0')
-            ]
+        questionary.Choice('link   – symlink from somewhere', value='link', shortcut_key='l'),
+        questionary.Choice('bin    – link as command', value='bin', shortcut_key='b'),
+        questionary.Choice('unpack – unpack archive to project directory', value='unpack', shortcut_key='u'),
+        questionary.Choice('delete - remove from project directory', value='delete', shortcut_key='d'),
+        questionary.Choice('(don’t do anything for this file)', value='', shortcut_key='0')
+    ]
     choice_by_action = { choice.value : choice for choice in action_choices }
 
     action = questionary.select(f"What should be done with {filename} ({kind.description})?",
@@ -155,7 +164,7 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
         project = get_project(url, must_exist=False)
         if project.configured:
             console.print(f'The project [bold]{project.name}[/bold] is already configured:')
-            list_([project.name], config=True)
+            status([project.name], config=True)
             console.print('If you reconfigure it, it will be uninstalled first, and the '
                           'existing configuration will be partially deleted.')
             if questionary.confirm('Reconfigure the project?', default=False).ask():
@@ -201,9 +210,9 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
 
                 if detailed:
                     pattern = questionary.text(f'Asset matching pattern',
-                            default=pattern,
-                            validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
-                            instruction=f'edit/accept pattern for {asset_name}').ask()
+                                               default=pattern,
+                                               validate=FNMatchValidator(asset_names, must_match=asset_name, max_matches=1),
+                                               instruction=f'edit/accept pattern for {asset_name}').ask()
                 else:
                     logger.info('Asset pattern for %s: %s', asset_name, pattern)
                 asset.configure(match=pattern)
@@ -410,21 +419,106 @@ def file_table(project: GitHubProject, include_type=False, **kwargs):
         table.add_column('File Type')
     for file in project.get_installed():
         cells = [str(file),
-                      str(file.install_spec) if file.install_spec else '',
-                      'A' if file.asset else '',
-                      'X' if file.external else '']
+                 str(file.install_spec) if file.install_spec else '',
+                 'A' if file.asset else '',
+                 'X' if file.external else '']
         if include_type:
             cells.append(str(FileType(file.path)))
         table.add_row(*cells, style='bold' if file.external else 'dim' if file.install_spec else '')
     return table
 
+@app.command()
+def ls(projects: List[str] = typer.Argument(None),
+       ignore_boring: bool = typer.Option(False, "-i", "--ignore-boring", help="list only assets and external or installable or unregistered files"),
+       show_details: bool = typer.Option(False, "-d", "--details", help="Show link targets and install instructions")
+       ):
+    """
+    List a project's files.
 
+    All relative file paths are relative to the project directory, which can be shown
+    using `getrel pd <project>`.
 
-@app.command('list')
-def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omit for all)"),
-          details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
-          config: bool = typer.Option(False, "-c", "--config", help="include configuration section"),
-          files: bool = typer.Option(False, "-f", "--files", help="show installed files")):
+    The Details column shows the install configuration for source files, if it exists,
+    and symlink information for installed symlinks.
+
+    Status:
+        A: it’s an artifact
+        X: eXternal, i.e. not in the project directory but installed into the system
+        x: eXecutable
+        d: a directory
+        ?: an unregistered file found in the project directory
+    """
+    if not projects:
+        projects = list(edit_projects())
+    single_project = len(projects) == 1
+
+    table = Table(box=False, row_styles=('', 'on #202020'))
+    if single_project:
+        table.title = projects[0]
+    else:
+        table.add_column('Project')
+
+    table.add_column('File', overflow='fold')
+    table.add_column('Attr')
+    table.add_column('Size', justify='right')
+    table.add_column('Modified')
+    if show_details:
+        table.add_column('Details')
+
+    for project in projects:
+        current_project = get_project(project)
+        selected = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
+        shown_project_name = False
+
+        def pathtext(file: ProjectFile) -> Text:
+            path = file.path
+            text = Text(file.project.project_relative_fspath(path))
+            text.stylize('bold', len(text) - len(path.name))
+            return text
+
+        def attr(file: ProjectFile) -> Text:
+            result = Text()
+            na = Text('-', '#404040')
+            stat = file.path.stat()
+            result += Text('A', 'cyan') if file.asset else na
+            result += Text('X', 'red') if file.external else na
+            result += Text('x', 'yellow') if stat.st_mode & 0o111 else na
+            result += Text('d', 'green') if file.path.is_dir() else na
+            result += Text('?', 'blue') if file.unregistered else na
+            return result
+
+        for file in selected:
+            stat = file.path.lstat()
+            cells = [
+                pathtext(file),
+                attr(file),
+                styled_nsize(stat.st_size),
+                styled_ntime(datetime.fromtimestamp(stat.st_mtime))]
+            if show_details:
+                cells.append(Text(str(file.install_spec), style='green') if file.install_spec
+                             else Text('⏵' + current_project.project_relative_fspath(file.path.readlink()),
+                                       style='cyan') if file.path.is_symlink()
+                             else '')
+            if not single_project:
+                cells.insert(0, '' if shown_project_name else Text(str(current_project), 'bright_cyan on black'))
+                shown_project_name = True
+            table.add_row(*cells, end_section=file == selected[-1])
+    console.print(table)
+
+def styled_nsize(size: int) -> Text:
+    return Text(humanize.naturalsize(size),
+                "bold" if size >= 2 ** 20 else "dim" if size < 2 ** 10 else "")
+
+def styled_ntime(time: datetime) -> Text:
+    delta = datetime.now() - time
+    return Text(humanize.naturaltime(time),
+                "bold" if delta.days < 14 else "dim" if delta.days > 365 else "")
+
+@app.command()
+def status(projects: List[str] = typer.Argument(None, help="Projects to show (omit for all)"),
+           details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
+           config: bool = typer.Option(False, "-c", "--config", help="include configuration section"),
+           files: bool = typer.Option(False, "-f", "--files", help="show installed files")):
     """
     List the configured projects and their state.
     """
@@ -435,6 +529,8 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
         table.add_column('Installed')
         table.add_column('Candidate')
         table.add_column('Updated')
+        #if not files:
+        #    table.add_column('Commands')
         if config:
             table.add_column('Config')
         if files:
@@ -444,7 +540,10 @@ def list_(projects: List[str] = typer.Argument(None, help="Projects to list (omi
                 continue
             try:
                 project = get_project(name)
-                cells = [name, project.state.get('installed', '–'), repr(project.select_release()), project.state.get('updated', '–')]
+                cells = [name,
+                         project.state.get('installed', '–'),
+                         repr(project.select_release()),
+                         naturaltime(datetime.fromisoformat(project.state.get('updated', '–')))]
                 if config:
                     cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
                 if files:
@@ -469,15 +568,23 @@ def edit():
     subprocess.run([editor_cmd, os.fspath(projects.store)])
     if projects.store.stat().st_mtime > last_modified:
         projects.load()
-        list_([])
+        status([])
 
 @app.command()
-def pd(project_name: str, command: List[str] = typer.Argument(None, help="Command to run in the project directory")):
+def pd(project_name: str,
+       show: bool = typer.Option(False, '--show', '-s', help='Show the directory in the system’s file viewer'),
+       command: List[str] = typer.Argument(None, help="Command to run in the project directory")):
     """
-    Access the given project and run a command in its directory. If no command is given, just print the project directory.
+    Access the given project and run a command in its directory.
+
+    If no command is given, just print the project directory. To pass options to the command you called, use -- between
+    getrel options and the command, e.g. ‘getrel pd fd -- ls -sl’ runs ‘ls -sl’ in the project directory of project fd
+
     """
     try:
         project = get_project(project_name, must_exist=True)
+        if show:
+            typer.launch(os.fspath(project.directory))
         if not command:
             console.print(os.fspath(project.directory))
         else:
@@ -487,6 +594,12 @@ def pd(project_name: str, command: List[str] = typer.Argument(None, help="Comman
     except Exception as e:
         logger.error('Failed to run command %s for project %s: %s', ' '.join(command) or 'pd', project_name, e)
 
+@app.command()
+def browse(project_name: str):
+    project = get_project(project_name, must_exist=True)
+    url = project.config.get('url')
+    logger.info('Launching browser in %s’s URL, %s', project.name, url)
+    typer.launch(url)
 
 @app.command()
 def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all questions")):

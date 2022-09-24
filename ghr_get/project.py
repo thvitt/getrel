@@ -52,11 +52,12 @@ class ProjectFile:
     asset: Optional["GithubAsset"] = None
     install_spec: Optional[Mapping] = None
     external: bool = False
+    boring: bool = False
 
-    def __init__(self, project: "GitHubProject", file: Path | str):
+    def __init__(self, project: "GitHubProject", file: Path | str, unregistered=False):
         self.project = project
         self.path = project.resolve_path(file)
-
+        self.unregistered = unregistered
         self.external = not self.path.is_relative_to(project.directory)
 
         for asset in project.get_assets():
@@ -76,6 +77,10 @@ class ProjectFile:
                 if fnmatch(project.project_relative_fspath(self.path), pattern):
                     self.install_spec = action
                     break
+
+        self.boring = not (self.external or self.install_spec or self.unregistered or self.asset)
+
+
 
     def __hash__(self):
         return hash(self.project.name) + hash(self.path)
@@ -447,8 +452,13 @@ class GitHubProject(Installable):
             else:
                 logger.debug('%s not registered, cannot unregister', file)
 
-    def get_installed(self) -> list[ProjectFile]:
-        return [ProjectFile(self, f) for f  in self.installed_files]
+    def get_installed(self, include_unknown=False) -> list[ProjectFile]:
+        installed_files = self.installed_files
+        project_dir_files = set(map(self.project_relative_fspath,
+                                    (p for p in self.directory.rglob('*')
+                                     if not (p.is_dir() or p.is_relative_to(config.project_state_directory(self.name))))))
+        unknown_files = project_dir_files - set(installed_files)
+        return [ProjectFile(self, f) for f in self.installed_files] + [ProjectFile(self, f, unregistered=True) for f in unknown_files]
 
     def uninstall(self, keep_assets=False):
         count = 0
