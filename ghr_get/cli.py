@@ -480,11 +480,19 @@ def ls(projects: List[str] = typer.Argument(None),
         def attr(file: ProjectFile) -> Text:
             result = Text()
             na = Text('-', '#404040')
-            stat = file.path.stat()
+            is_link = file.path.is_symlink()
+            try:
+                stat = file.path.stat()
+                link_flag = Text('∞', 'light_blue') if is_link else na
+            except FileNotFoundError as e:
+                link_flag = Text('!', 'bold red')
+                logger.debug(e)
+                stat = file.path.stat(follow_symlinks=False)
             result += Text('A', 'cyan') if file.asset else na
-            result += Text('X', 'red') if file.external else na
+            result += Text('X', 'magenta') if file.external else na
             result += Text('x', 'yellow') if stat.st_mode & 0o111 else na
             result += Text('d', 'green') if file.path.is_dir() else na
+            result += link_flag
             result += Text('?', 'blue') if file.unregistered else na
             return result
 
