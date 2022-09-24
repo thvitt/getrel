@@ -367,6 +367,7 @@ def _remove_directory(directory: Path, force: bool):
 @app.command()
 def uninstall(projects: List[str] = typer.Argument(None),
               all: bool = typer.Option(False, '--all', help="run uninstall for all projects (if no projects given)"),
+              keep_assets: bool = typer.Option(False, '-k', '--keep-assets', help='Do not remove the downloaded assets'),
               remove_config: bool = typer.Option(False, '-c', '--config',  help="Also remove the configuration for the project"),
               remove_status: bool = typer.Option(False, '-s', '--status',  help=f"Also remove {APP_NAME}'s state info for the project"),
               remove_directory: bool = typer.Option(False, '-d', '--directory',  help="Also remove everything within the project directory"),
@@ -388,7 +389,7 @@ def uninstall(projects: List[str] = typer.Argument(None),
                     continue
             project = get_project(project_name)
             logger.debug('Uninstalling %s', project)
-            project.uninstall()
+            project.uninstall(keep_assets=keep_assets)
 
             if remove_status:
                 shutil.rmtree(project_state_directory(project_name))
