@@ -610,8 +610,11 @@ class GitHubProject(Installable):
                 selected_release = self.select_release()
                 if selected_release:
                     state['candidate'] = selected_release.version
-                    logger.info('%s: New release %s available', self.name, selected_release)
-                    return True
+                    if state['candidate'] != state.get('installed'):
+                        logger.info('%s: New release %s available', self.name, selected_release)
+                        return True
+                    else:
+                        return False
                 else:
                     if release_config:
                         logger.warning('%s: No release matching %s found.', self.name, release_config)
