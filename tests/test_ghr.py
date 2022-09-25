@@ -1,4 +1,4 @@
-from ghr_get.ghr import GitHubProject
+from getrel.ghr import GitHubProject
 
 
 def test_ghr_project_short():

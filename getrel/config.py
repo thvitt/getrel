@@ -16,7 +16,7 @@ import tomlkit
 import logging
 logger = logging.getLogger(__name__)
 
-APP_NAME = 'ghr-get'
+APP_NAME = 'getrel'
 
 """
 - ~/.config/{APP_NAME}/settings.toml  contains the optional configuration file
