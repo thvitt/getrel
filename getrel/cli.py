@@ -267,18 +267,36 @@ def install(projects: List[str] = typer.Argument(None),
             reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed"),
             uninstall: bool = typer.Option(False, "-U", "--uninstall", help="uninstall first if it is installed"),
             ):
-    """Install given or all projects."""
+    """
+    Install given or all projects.
+    """
     if not projects:
         projects = edit_projects()
+
+    updated = uninstalled = installed = 0
 
     for name in projects:
         project = get_project(name, must_exist=True)
         if update:
             project.update()
+            updated += 1
         if uninstall and project.get_installed():
             project.uninstall()
+            uninstalled += 1
         if reinstall or project.needs_install:
             project.install(force=reinstall)
+            installed += 1
+    logger.info('%d projects updated, %d uninstalled and %d installed.', updated, uninstalled, installed)
+
+
+@app.command()
+def upgrade(projects: List[str] = typer.Argument(None)):
+    """
+    Updates and installs the given (or all) projects.
+
+    This is an alias for 'getrel install -u [PROJECTS]'.
+    """
+    install(projects, update=True, reinstall=False, uninstall=False)
 
 
 def _clear_display_names(table):
