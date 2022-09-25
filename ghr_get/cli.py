@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Collection, Optional, List
+from typing import Collection, Optional, List, Iterable
 
 import humanize
 import rich.table
@@ -431,7 +431,8 @@ def file_table(project: GitHubProject, include_type=False, **kwargs):
 @app.command()
 def ls(projects: List[str] = typer.Argument(None),
        ignore_boring: bool = typer.Option(False, "-i", "--ignore-boring", help="list only assets and external or installable or unregistered files"),
-       show_details: bool = typer.Option(False, "-d", "--details", help="Show link targets and install instructions")
+       show_details: bool = typer.Option(False, "-d", "--details", help="Show link targets and install instructions"),
+       show_tree: bool = typer.Option(False, "-t", "--tree", help="Arrange the file names as a tree"),
        ):
     """
     List a project's files.
@@ -468,7 +469,12 @@ def ls(projects: List[str] = typer.Argument(None),
 
     for project in projects:
         current_project = get_project(project)
-        selected = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
+        selected_ = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
+        if show_tree:
+            selected = sorted(selected_, key=lambda p: p.path.parts)
+            relative_paths = [Path(s.project.project_relative_fspath(s.path)) for s in selected]
+        else:
+            selected = selected_
         shown_project_name = False
 
         def pathtext(file: ProjectFile) -> Text:
@@ -496,10 +502,18 @@ def ls(projects: List[str] = typer.Argument(None),
             result += Text('?', 'blue') if file.unregistered else na
             return result
 
-        for file in selected:
+        if show_tree:
+            tree = pathtree(relative_paths, sort=False)
+            with console.capture() as capture:
+                console.print(tree)
+            lines = capture.get().split('\n')[1:-1]
+        else:
+            lines = [pathtext(s) for s in selected]
+
+        for file, tree_line in zip(selected, lines):
             stat = file.path.lstat()
             cells = [
-                pathtext(file),
+                tree_line,
                 attr(file),
                 styled_nsize(stat.st_size),
                 styled_ntime(datetime.fromtimestamp(stat.st_mtime))]
@@ -522,6 +536,8 @@ def styled_ntime(time: datetime) -> Text:
     delta = datetime.now() - time
     return Text(humanize.naturaltime(time),
                 "bold" if delta.days < 14 else "dim" if delta.days > 365 else "")
+
+
 
 @app.command()
 def status(projects: List[str] = typer.Argument(None, help="Projects to show (omit for all)"),
@@ -665,6 +681,19 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
     logger.info('%d of %d projects had no problems. Removed %d of %d project directories.',
                 valid_projects, project_count, rm_directories, directories)
 
+
+def pathtree(paths: Iterable[Path], sort=True) -> Tree:
+    sorted_paths = sorted(paths, key=lambda p: p.parts) if sort else list(paths)
+    root = Tree('', hide_root=False, guide_style='dim')
+    stack: list[tuple[Optional[Path], Tree]] = [(None, root)]
+
+    for path in sorted_paths:
+        while not (stack[-1][0] is None or path.is_relative_to(stack[-1][0])):
+            stack.pop()
+        parent, tree = stack[-1]
+        label = os.fspath(path.relative_to(parent)) if parent is not None else os.fspath(path)
+        stack.append((path, tree.add(label)))
+    return root
 
 @app.command()
 def rename(project_name: str, new_name: str):
