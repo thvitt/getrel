@@ -431,6 +431,7 @@ def file_table(project: GitHubProject, include_type=False, **kwargs):
 @app.command()
 def ls(projects: List[str] = typer.Argument(None),
        ignore_boring: bool = typer.Option(False, "-i", "--ignore-boring", help="list only assets and external or installable or unregistered files"),
+       only_external: bool = typer.Option(False, "-x", "--only-external", help="list only files outside of the project directory"),
        show_details: bool = typer.Option(False, "-d", "--details", help="Show link targets and install instructions"),
        show_tree: bool = typer.Option(False, "-t", "--tree", help="Arrange the file names as a tree"),
        ):
@@ -469,7 +470,10 @@ def ls(projects: List[str] = typer.Argument(None),
 
     for project in projects:
         current_project = get_project(project)
-        selected_ = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
+        if only_external:
+            selected_ = [f for f in current_project.get_installed(include_unknown=False) if f.external]
+        else:
+            selected_ = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
         if show_tree:
             selected = sorted(selected_, key=lambda p: p.path.parts)
             relative_paths = [Path(s.project.project_relative_fspath(s.path)) for s in selected]
