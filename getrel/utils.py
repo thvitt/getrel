@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from tarfile import is_tarfile
 from typing import TypeVar, Iterable, MutableMapping, Sequence, Callable
@@ -5,11 +6,12 @@ import stat
 from mimetypes import guess_type
 from typing import Optional
 from zipfile import is_zipfile
+import email.utils as eut
 
 import requests
 import logging
 
-from .config import get_progress
+from .config import get_progress, settings
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,10 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
         False if the data has not been newer.
         a response if return_response is true and True would have been returned.
     """
+    if 'last-request' in cache and (datetime.now() - datetime.fromisoformat(cache['last-request'])).total_seconds() <= settings.fetch_delay:  # type:ignore
+        return False
+    if 'Last-Modified' in cache and (datetime.now() - parse_http_date(cache['Last-Modified'])).total_seconds() <= settings.update_delay:  # type:ignore
+        return False
 
     with get_progress(transient=True) as progress:
         progress_msg = str(message or download_file or url)
@@ -157,6 +163,7 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
             if 'Last-Modified' in cache:
                 headers['If-Modified-Since'] = str(cache['Last-Modified'])
         response = requests.get(url, headers=headers, **kwargs)
+        cache['last-request'] = datetime.now().isoformat()
         if response.status_code == requests.codes.not_modified:
             logger.debug('%s: Not modified', url)
             progress.stop_task(task_id)
@@ -234,3 +241,7 @@ def shorten_list(source: Sequence[T], predicate: Callable[[T], bool], min_items:
         return source
     else:
         return result
+
+
+def parse_http_date(http_date: str) -> datetime:
+    return datetime(*eut.parsedate(http_date)[:6]) # type:ignore

@@ -112,10 +112,11 @@ class BaseSettings(ABC, MutableMapping):
         if isinstance(file, str):
             file = Path(file)
         self.store = file
-        if file.exists():
+        try:
             self.load()
-        else:
+        except Exception as e:
             self.data = self.new_data()
+            logger.debug('Could not load %s: %s. Using new data.', file, e, exc_info=True)
 
         if data is not None:
             self.data.update(data)
@@ -216,6 +217,36 @@ def verb_or_spec(value: str | Mapping | None, allowed_verbs=None):
     return verb, arg
 
 
+class SettingAttribute:
+
+    _no_default = object()
+
+    def __init__(self, name, default=_no_default, autosave=False):
+        self.name = name
+        self.default = default
+        self.autosave = False
+
+    def __get__(self, obj: BaseSettings, objtype=None):
+        try:
+            return obj[self.name]
+        except KeyError:
+            if self.default is self._no_default:
+                raise
+            else:
+                return self.default
+
+    def __set__(self, obj, value):
+        obj[self.name] = value
+        if self.autosave:
+            obj.save()
+
+
+class _ProgramSettings(Settings):
+    update_delay = SettingAttribute('update_delay', default=3600)
+    fetch_delay = SettingAttribute('fetch_delay', default=60)
+
+settings = _ProgramSettings(xdg.xdg_config_home() / APP_NAME / 'settings.toml')
+
 def expand_path(path: str | os.PathLike, project_name=None, **kwargs) -> Path:
     if project_name:
         kwargs['PROJECT'] = project_name
@@ -237,7 +268,6 @@ def update_environ(extra_env):
 @lru_cache
 def edit_project_state(project_name: str) -> BaseSettings:
     return JSONSettings(project_state_directory(project_name) / 'state.json')
-
 
 def get_progress(**kwargs):
     try:
