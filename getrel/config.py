@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from difflib import unified_diff
+from operator import getitem
 from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
 from functools import lru_cache
+from unittest.mock import MagicMock
 
 from tomlkit.toml_document import TOMLDocument
 import json
@@ -257,4 +259,4 @@ def get_progress(**kwargs):
         )
     except ImportError:
         from unittest.mock import Mock
-        return Mock()
+        return MagicMock()
