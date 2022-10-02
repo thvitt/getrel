@@ -682,9 +682,19 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
 
             if not valid:
                 console.print(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
-                if yes or questionary.confirm('Delete the project config (above)?').ask():
+                if not yes:
+                    answer = questionary.select('Delete the project config (above)?',  [
+                        questionary.Choice('Yes, delete', value='yes', shortcut_key='y'), 
+                        questionary.Choice('Configure instead (run getrel add again)', value='configure', shortcut_key='c'), 
+                        questionary.Choice('No', value='no', shortcut_key='n')], use_shortcuts=True).ask()
+                if yes or answer == 'yes':
                     del projects[name]
                     logger.warning('Removed invalid config for %s', name)
+                elif answer == 'configure':
+                    if url := project_config.get('url'):
+                        add(url, detailed=False)
+                    else:
+                        add(name)
             else:
                 valid_projects += 1
                 unknown_files = [f for f in project.get_installed(include_unknown=True) if f.unregistered]
