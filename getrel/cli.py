@@ -571,6 +571,8 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
     """
     all_projects = edit_projects()
     if details:
+        binaries = not files and not config
+        bindir = Path.home() / '.local/bin'
         table = Table(box=None)
         table.add_column('Project')
         table.add_column('Installed')
@@ -582,6 +584,8 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
             table.add_column('Config')
         if files:
             table.add_column('Files')
+        if binaries:
+            table.add_column('Commands')
         for name in all_projects:
             if projects and name not in projects:
                 continue
@@ -595,6 +599,9 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
                     cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
                 if files:
                     cells.append(file_table(project))
+                if binaries:
+                    binfiles = [pf for pf in project.get_installed() if pf.external and pf.path.is_relative_to(bindir)]
+                    cells.append('  '.join(pf.path.name for pf in binfiles))
                 table.add_row(*cells)
             except Exception as e:
                 logger.exception('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
