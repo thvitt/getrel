@@ -70,6 +70,14 @@ python-versions = "*"
 test = ["flake8 (==3.7.8)", "hypothesis (==3.55.3)"]
 
 [[package]]
+name = "durations"
+version = "0.3.3"
+description = "UNKNOWN"
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "future"
 version = "0.18.2"
 description = "Clean single-source support for Python 3 and 2"
@@ -368,7 +376,7 @@ tui = ["rich", "questionary", "typer", "humanize", "python-magic"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.10,<3.11"
-content-hash = "37aa638a74540a2b6e4d282507520a8ab60a4a149b030fdafa39a297d63b95b4"
+content-hash = "0a0c9f39a310e871d98a59a1fae0b175ace4e195d85b4d8d15452199ee1b8c9c"
 
 [metadata.files]
 altgraph = []
@@ -392,6 +400,9 @@ colorama = [
 commonmark = [
     {file = "commonmark-0.9.1-py2.py3-none-any.whl", hash = "sha256:da2f38c92590f83de410ba1a3cbceafbc74fee9def35f9251ba9a971d6d66fd9"},
     {file = "commonmark-0.9.1.tar.gz", hash = "sha256:452f9dc859be7f06631ddcb328b6919c67984aca654e5fefb3914d54691aed60"},
+]
+durations = [
+    {file = "durations-0.3.3.tar.gz", hash = "sha256:820ffe09c390469dc621b6a0aa46d3a624b6dadf09b439e175696b6f6b77ef2f"},
 ]
 future = []
 humanize = [

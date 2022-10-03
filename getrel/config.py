@@ -1,13 +1,16 @@
+import typing
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
+from datetime import timedelta
 from difflib import unified_diff
 from operator import getitem
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypeVar
 from contextlib import contextmanager
 from functools import lru_cache
 from unittest.mock import MagicMock
 
+from durations import Duration
 from tomlkit.toml_document import TOMLDocument
 import json
 import os
@@ -217,33 +220,69 @@ def verb_or_spec(value: str | Mapping | None, allowed_verbs=None):
     return verb, arg
 
 
+T = TypeVar('T')
 class SettingAttribute:
 
     _no_default = object()
 
-    def __init__(self, name, default=_no_default, autosave=False):
+    def __init__(self, name: str,
+                 default: T =_no_default,
+                 *,
+                 autosave: bool = False,
+                 dtype: Optional[typing.Type[T]] = None,
+                 parse: Optional[typing.Callable[[typing.Any], T]] = None,
+                 unparse: Optional[typing.Callable[[T], typing.Any]] = None):
+        """
+        Descriptor for saving stuff to a 'BaseSettings' instance.
+
+        Args:
+            name: Name of the value
+            default: Optional default value (if value is not present in settings object).
+            autosave: call save() on the settings object after modifying the attribute
+            dtype: return datatype. If present and parse is missing, return value will be converted to this type.
+            parse: function to convert between BaseSettings’ representation and return value.
+            unparse: other way around.
+        """
+        self.dtype = dtype
         self.name = name
         self.default = default
-        self.autosave = False
+        self.autosave = autosave
 
-    def __get__(self, obj: BaseSettings, objtype=None):
+        if parse is not None:
+            self.parse = parse
+        elif dtype is not None:
+            self.parse = dtype
+        else:
+            self.parse = lambda x: x
+
+        if unparse is not None:
+            self.unparse = unparse
+        else:
+            self.unparse = lambda x: x
+
+    def __get__(self, obj: BaseSettings, objtype=None) -> T:
         try:
-            return obj[self.name]
+            return self.parse(obj[self.name])
         except KeyError:
             if self.default is self._no_default:
                 raise
             else:
                 return self.default
 
-    def __set__(self, obj, value):
-        obj[self.name] = value
+    def __set__(self, obj: BaseSettings, value: T):
+        obj[self.name] = self.unparse(value)
         if self.autosave:
             obj.save()
 
+def _parse_duration(s: str) -> timedelta:
+    return timedelta(seconds=Duration(str(s)).to_seconds())
+
+def _unparse_duration(d: timedelta) -> str:
+    return str(int(d.total_seconds()))+'s'
 
 class _ProgramSettings(Settings):
-    update_delay = SettingAttribute('update_delay', default=3600)
-    fetch_delay = SettingAttribute('fetch_delay', default=60)
+    fetch_delay = SettingAttribute('fetch_delay', default=timedelta(days=1), dtype=timedelta, parse=_parse_duration, unparse=_unparse_duration)
+    update_delay = SettingAttribute('update_delay', default=timedelta(days=1), dtype=timedelta, parse=_parse_duration, unparse=_unparse_duration)
 
 settings = _ProgramSettings(xdg.xdg_config_home() / APP_NAME / 'settings.toml')
 
