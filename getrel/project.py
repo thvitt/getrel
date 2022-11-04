@@ -744,7 +744,7 @@ class GitHubProject(Installable):
             logger.error('No matching release found for project %s. Maybe run %s add %s again',
                          self, config.APP_NAME, self)
         needs_install = self.download()
-        if needs_install or force or not self.state.get('installed'):
+        if needs_install or self.needs_upgrade or force or not self.state.get('installed'):
             super().install(including_assets=including_assets)
             if 'postinstall' in self.config:
                 logger.debug('Running postinstall script for %s:\n%s', self.project, self.config['postinstall'])
@@ -758,12 +758,25 @@ class GitHubProject(Installable):
                 state['installed'] = release.todict()
 
     @property
+    def installed_release(self):
+        rec = self.state.get('installed')
+        if rec:
+            return Release.fromdict(rec)
+        else:
+            return rec
+
+    @property
     def needs_install(self):
         return not self.state.get('installed')
 
     @property
     def needs_update(self):
         return not self.state.get('updated')
+
+    @property
+    def needs_upgrade(self):
+        installed = self.installed_release
+        return installed and installed < self.select_release()
 
     def exec_script(self, script: str, record_new_files: Optional[list] = None, capture: bool = False) -> int:
         """

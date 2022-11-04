@@ -267,6 +267,7 @@ def update(projects: List[str] = typer.Argument(None, autocompletion=_project_na
 @app.command()
 def install(projects: List[str] = typer.Argument(None, autocompletion=_project_names),
             update: bool = typer.Option(False, "-u", "--update", help="update the project state first"),
+            upgrade: bool = typer.Option(False, "-g", "--upgrade", help="upgrade installed projects to newer version"),
             reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed"),
             uninstall: bool = typer.Option(False, "-U", "--uninstall", help="uninstall first if it is installed"),
             ):
@@ -283,23 +284,32 @@ def install(projects: List[str] = typer.Argument(None, autocompletion=_project_n
         if update:
             project.update()
             updated += 1
-        if uninstall and project.get_installed():
-            project.uninstall()
-            uninstalled += 1
-        if reinstall or project.needs_install:
+        do_upgrade = upgrade and project.needs_upgrade
+        if reinstall or project.needs_install or do_upgrade:
+            if uninstall and project.get_installed():
+                project.uninstall()
+                uninstalled += 1
             project.install(force=reinstall)
             installed += 1
     logger.info('%d projects updated, %d uninstalled and %d installed.', updated, uninstalled, installed)
 
 
 @app.command()
-def upgrade(projects: List[str] = typer.Argument(None, autocompletion=_project_names)):
+def upgrade(projects: List[str] = typer.Argument(None, autocompletion=_project_names),
+            update: bool = typer.Option(False, "-u", "--update", help="update the project state first"),
+            uninstall: bool = typer.Option(False, "-U", "--uninstall", help="uninstall first if it is installed"),
+            only_installed: bool = typer.Option(False, "-i", "--only-installed", help="only upgrade projects that are installed, don't install missing projects")):
     """
-    Updates and installs the given (or all) projects.
+    Upgrades projects to new versions.
+    """
 
-    This is an alias for 'getrel install -u [PROJECTS]'.
-    """
-    install(projects, update=True, reinstall=False, uninstall=False)
+    if not projects:
+        projects = list(edit_projects())
+
+    if only_installed:
+        projects = [p for p in projects if get_project(p).needs_upgrade]
+
+    install(projects, upgrade=True, update=update, uninstall=uninstall, reinstall=False)
 
 
 def _clear_display_names(table):
@@ -613,8 +623,8 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
                                  f'updated {updated}']
                     else:
                         cells = [name,
-                                 installed,
-                                 candidate,
+                                 str(installed),
+                                 str(candidate),
                                  updated]
                     if config:
                         cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
@@ -626,12 +636,12 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
                     if updated == none:
                         style = 'bold yellow'
                         update_list.append(project)
-                    elif installed != candidate:
+                    elif project.needs_upgrade:
                         style = 'bold green'
                         upgrade_list.append(project)
                     else:
                         style = None
-                    table.add_row(*map(str, cells), style=style)
+                    table.add_row(*cells, style=style)
                 except Exception as e:
                     logger.exception('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
         #console.print(table)
