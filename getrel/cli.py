@@ -248,9 +248,11 @@ def add(url: str, detailed: bool = typer.Option(False, "-d", "--detailed",
         console.print(file_table(project, include_type=True))
     project.save()
 
+def _project_names():
+    return list(edit_projects())
 
 @app.command()
-def update(projects: List[str] = typer.Argument(None)):
+def update(projects: List[str] = typer.Argument(None, autocompletion=_project_names)):
     """Update project metadata."""
     updated = []
     if not projects:
@@ -263,7 +265,7 @@ def update(projects: List[str] = typer.Argument(None)):
 
 
 @app.command()
-def install(projects: List[str] = typer.Argument(None),
+def install(projects: List[str] = typer.Argument(None, autocompletion=_project_names),
             update: bool = typer.Option(False, "-u", "--update", help="update the project state first"),
             reinstall: bool = typer.Option(False, "-r", "--reinstall", help="run install even if already installed"),
             uninstall: bool = typer.Option(False, "-U", "--uninstall", help="uninstall first if it is installed"),
@@ -291,7 +293,7 @@ def install(projects: List[str] = typer.Argument(None),
 
 
 @app.command()
-def upgrade(projects: List[str] = typer.Argument(None)):
+def upgrade(projects: List[str] = typer.Argument(None, autocompletion=_project_names)):
     """
     Updates and installs the given (or all) projects.
 
@@ -384,7 +386,7 @@ def _remove_directory(directory: Path, force: bool):
                 shutil.rmtree(directory)
 
 @app.command()
-def uninstall(projects: List[str] = typer.Argument(None),
+def uninstall(projects: List[str] = typer.Argument(None, autocompletion=_project_names),
               all: bool = typer.Option(False, '--all', help="run uninstall for all projects (if no projects given)"),
               keep_assets: bool = typer.Option(False, '-k', '--keep-assets', help='Do not remove the downloaded assets'),
               remove_config: bool = typer.Option(False, '-c', '--config',  help="Also remove the configuration for the project"),
@@ -448,7 +450,7 @@ def file_table(project: GitHubProject, include_type=False, **kwargs):
     return table
 
 @app.command()
-def ls(projects: List[str] = typer.Argument(None),
+def ls(projects: List[str] = typer.Argument(None, autocompletion=_project_names),
        ignore_boring: bool = typer.Option(False, "-i", "--ignore-boring", help="list only assets and external or installable or unregistered files"),
        only_external: bool = typer.Option(False, "-x", "--only-external", help="list only files outside of the project directory"),
        show_details: bool = typer.Option(False, "-d", "--details", help="Show link targets and install instructions"),
@@ -487,69 +489,69 @@ def ls(projects: List[str] = typer.Argument(None),
     if show_details:
         table.add_column('Details')
 
-    for project in projects:
-        current_project = get_project(project)
-        if only_external:
-            selected_ = [f for f in current_project.get_installed(include_unknown=False) if f.external]
-        else:
-            selected_ = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
-        if show_tree:
-            selected = sorted(selected_, key=lambda p: p.path.parts)
-            relative_paths = [Path(s.project.project_relative_fspath(s.path)) for s in selected]
-        else:
-            selected = selected_
-        shown_project_name = False
+    with Live(table, console=console):
+        for project in projects:
+            current_project = get_project(project)
+            if only_external:
+                selected_ = [f for f in current_project.get_installed(include_unknown=False) if f.external]
+            else:
+                selected_ = [f for f in current_project.get_installed(include_unknown=True) if not (ignore_boring and f.boring)]
+            if show_tree:
+                selected = sorted(selected_, key=lambda p: p.path.parts)
+                relative_paths = [Path(s.project.project_relative_fspath(s.path)) for s in selected]
+            else:
+                selected = selected_
+            shown_project_name = False
 
-        def pathtext(file: ProjectFile) -> Text:
-            path = file.path
-            text = Text(file.project.project_relative_fspath(path))
-            text.stylize('bold', len(text) - len(path.name))
-            return text
+            def pathtext(file: ProjectFile) -> Text:
+                path = file.path
+                text = Text(file.project.project_relative_fspath(path))
+                text.stylize('bold', len(text) - len(path.name))
+                return text
 
-        def attr(file: ProjectFile) -> Text:
-            result = Text()
-            na = Text('-', '#404040')
-            is_link = file.path.is_symlink()
-            try:
-                stat = file.path.stat()
-                link_flag = Text('∞', 'light_blue') if is_link else na
-            except FileNotFoundError as e:
-                link_flag = Text('!', 'bold red')
-                logger.debug(e)
-                stat = file.path.stat(follow_symlinks=False)
-            result += Text('A', 'cyan') if file.asset else na
-            result += Text('X', 'magenta') if file.external else na
-            result += Text('x', 'yellow') if stat.st_mode & 0o111 else na
-            result += Text('d', 'green') if file.path.is_dir() else na
-            result += link_flag
-            result += Text('?', 'blue') if file.unregistered else na
-            return result
+            def attr(file: ProjectFile) -> Text:
+                result = Text()
+                na = Text('-', '#404040')
+                is_link = file.path.is_symlink()
+                try:
+                    stat = file.path.stat()
+                    link_flag = Text('∞', 'light_blue') if is_link else na
+                except FileNotFoundError as e:
+                    link_flag = Text('!', 'bold red')
+                    logger.debug(e)
+                    stat = file.path.stat(follow_symlinks=False)
+                result += Text('A', 'cyan') if file.asset else na
+                result += Text('X', 'magenta') if file.external else na
+                result += Text('x', 'yellow') if stat.st_mode & 0o111 else na
+                result += Text('d', 'green') if file.path.is_dir() else na
+                result += link_flag
+                result += Text('?', 'blue') if file.unregistered else na
+                return result
 
-        if show_tree:
-            tree = pathtree(relative_paths, sort=False)
-            with console.capture() as capture:
-                console.print(tree)
-            lines = capture.get().split('\n')[1:-1]
-        else:
-            lines = [pathtext(s) for s in selected]
+            if show_tree:
+                tree = pathtree(relative_paths, sort=False)
+                with console.capture() as capture:
+                    console.print(tree)
+                lines = capture.get().split('\n')[1:-1]
+            else:
+                lines = [pathtext(s) for s in selected]
 
-        for file, tree_line in zip(selected, lines):
-            stat = file.path.lstat()
-            cells = [
-                tree_line,
-                attr(file),
-                styled_nsize(stat.st_size),
-                styled_ntime(datetime.fromtimestamp(stat.st_mtime))]
-            if show_details:
-                cells.append(Text(str(file.install_spec), style='green') if file.install_spec
-                             else Text('⏵' + current_project.project_relative_fspath(file.path.readlink()),
-                                       style='cyan') if file.path.is_symlink()
-                             else '')
-            if not single_project:
-                cells.insert(0, '' if shown_project_name else Text(str(current_project), 'bright_cyan on black'))
-                shown_project_name = True
-            table.add_row(*cells, end_section=file == selected[-1])
-    console.print(table)
+            for file, tree_line in zip(selected, lines):
+                stat = file.path.lstat()
+                cells = [
+                    tree_line,
+                    attr(file),
+                    styled_nsize(stat.st_size),
+                    styled_ntime(datetime.fromtimestamp(stat.st_mtime))]
+                if show_details:
+                    cells.append(Text(str(file.install_spec), style='green') if file.install_spec
+                                 else Text('⏵' + current_project.project_relative_fspath(file.path.readlink()),
+                                           style='cyan') if file.path.is_symlink()
+                                 else '')
+                if not single_project:
+                    cells.insert(0, '' if shown_project_name else Text(str(current_project), 'bright_cyan on black'))
+                    shown_project_name = True
+                table.add_row(*cells, end_section=file == selected[-1])
 
 def styled_nsize(size: int) -> Text:
     return Text(humanize.naturalsize(size),
@@ -563,7 +565,7 @@ def styled_ntime(time: datetime) -> Text:
 
 
 @app.command()
-def status(projects: List[str] = typer.Argument(None, help="Projects to show (omit for all)"),
+def status(projects: List[str] = typer.Argument(None, help="Projects to show (omit for all)", autocompletion=_project_names),
            details: bool = typer.Option(True, "-l/-1", "--long/--one", help="Show detailed list"),
            config: bool = typer.Option(False, "-c", "--config", help="include configuration section"),
            files: bool = typer.Option(False, "-f", "--files", help="show installed files")):
@@ -571,42 +573,71 @@ def status(projects: List[str] = typer.Argument(None, help="Projects to show (om
     List the configured projects and their state.
     """
     all_projects = edit_projects()
+    update_list = []
+    upgrade_list = []
     if details:
+        none = '–'
         binaries = not files and not config
+        merged_status = files or config
         bindir = Path.home() / '.local/bin'
         table = Table(box=None)
-        table.add_column('Project')
-        table.add_column('Installed')
-        table.add_column('Candidate')
-        table.add_column('Updated')
+        table.add_column('Project', max_width=15 if merged_status else None, overflow='fold')
+        if merged_status:
+            table.add_column('Status')
+        else:
+            table.add_column('Installed')
+            table.add_column('Candidate')
+            table.add_column('Updated')
         #if not files:
         #    table.add_column('Commands')
         if config:
-            table.add_column('Config')
+            table.add_column('Config', overflow='fold')
         if files:
-            table.add_column('Files')
+            table.add_column('Files', overflow='fold')
         if binaries:
-            table.add_column('Commands')
-        for name in all_projects:
-            if projects and name not in projects:
-                continue
-            try:
-                project = get_project(name)
-                cells = [name,
-                         project.state.get('installed', '–'),
-                         repr(project.select_release()),
-                         naturaltime(datetime.fromisoformat(project.state.get('updated', '–')))]
-                if config:
-                    cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
-                if files:
-                    cells.append(file_table(project))
-                if binaries:
-                    binfiles = [pf for pf in project.get_installed() if pf.external and pf.path.is_relative_to(bindir)]
-                    cells.append('  '.join(pf.path.name for pf in binfiles))
-                table.add_row(*cells)
-            except Exception as e:
-                logger.exception('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
-        console.print(table)
+            table.add_column('Commands', overflow='fold')
+        with Live(table, console=console, refresh_per_second=4):
+            for name in all_projects:
+                if projects and name not in projects:
+                    continue
+                try:
+                    project = get_project(name)
+                    updated_iso = project.state.get('updated')
+                    updated = naturaltime(datetime.fromisoformat(updated_iso)) if updated_iso else none
+                    installed = Release.fromdict(project.state.get('installed')) or none
+                    candidate = project.select_release() or none
+                    if merged_status:
+                        cells = [name,
+                                 f'Installed: [bold]{installed}[/bold]\n'
+                                 f'Candidate: [bold]{candidate}[/bold]\n'
+                                 f'updated {updated}']
+                    else:
+                        cells = [name,
+                                 installed,
+                                 candidate,
+                                 updated]
+                    if config:
+                        cells.append(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
+                    if files:
+                        cells.append(file_table(project))
+                    if binaries:
+                        binfiles = [pf for pf in project.get_installed() if pf.external and pf.path.is_relative_to(bindir)]
+                        cells.append('  '.join(pf.path.name for pf in binfiles))
+                    if updated == none:
+                        style = 'bold yellow'
+                        update_list.append(project)
+                    elif installed != candidate:
+                        style = 'bold green'
+                        upgrade_list.append(project)
+                    else:
+                        style = None
+                    table.add_row(*map(str, cells), style=style)
+                except Exception as e:
+                    logger.exception('Project %s could not be created: %s (config: %s)', name, e, all_projects[name])
+        #console.print(table)
+        if update_list or upgrade_list:
+            console.print(f'[yellow bold]{len(update_list)}[/] projects need an [bold]update[/] to their metadata, '
+                          f'[green bold]{len(upgrade_list)}[/] projects can be [bold]upgrade[/]d.')
     else:
         console.print("\n".join(name for name in all_projects))
 
@@ -626,7 +657,7 @@ def edit():
         status([])
 
 @app.command()
-def pd(project_name: str,
+def pd(project_name: str = typer.Argument(..., autocompletion=_project_names),
        show: bool = typer.Option(False, '--show', '-s', help='Show the directory in the system’s file viewer'),
        command: List[str] = typer.Argument(None, help="Command to run in the project directory")):
     """
@@ -650,7 +681,7 @@ def pd(project_name: str,
         logger.error('Failed to run command %s for project %s: %s', ' '.join(command) or 'pd', project_name, e)
 
 @app.command()
-def browse(project_name: str):
+def browse(project_name: str = typer.Argument(..., autocompletion=_project_names)):
     project = get_project(project_name, must_exist=True)
     url = project.config.get('url')
     logger.info('Launching browser in %s’s URL, %s', project.name, url)
@@ -736,7 +767,7 @@ def pathtree(paths: Iterable[Path], sort=True) -> Tree:
     return root
 
 @app.command()
-def rename(project_name: str, new_name: str):
+def rename(project_name: str = typer.Argument(..., autocompletion=_project_names), new_name: str = typer.Argument(...)):
     """
     Rename the project.
 

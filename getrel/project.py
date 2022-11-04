@@ -214,7 +214,7 @@ class Installable:
             return []
 
         link.parent.mkdir(parents=True, exist_ok=True)
-        link.symlink_to(self.source.absolute())     # FIXME can we use 'intelligent' relative links here, cf. fetchlink?
+        link.symlink_to(self.source.absolute())  # FIXME can we use 'intelligent' relative links here, cf. fetchlink?
         self.project.register_installed_file(link)
         logger.info('Linked %s from %s', self.source, link)
         return [link]
@@ -229,7 +229,7 @@ class Installable:
         assert self.source is not None
         self.source.chmod(0o755)
         if arg is None:
-            arg = self.source.stem #self.project.name
+            arg = self.source.stem  # self.project.name
         link = config.expand_path(arg, project_name=self.project.name, source=self.source)
         if not link.is_absolute():
             link = Path.home() / '.local/bin' / arg
@@ -261,7 +261,7 @@ class Installable:
         else:
             logger.error('%s: %s could not be identified as an archive, not unpacked.', self, self.source)
 
-        project_directory = self.project.directory.resolve()    # type:ignore
+        project_directory = self.project.directory.resolve()  # type:ignore
         extracted_files = [(path / member).resolve().relative_to(project_directory) for member in member_names]
         self.project.register_installed_file(*extracted_files)
         return extracted_files
@@ -436,6 +436,7 @@ class GitHubProject(Installable):
     _projects_config: Optional[BaseSettings] = None
 
     @property
+    @lru_cache
     def config(self) -> MutableMapping:
         if self._projects_config is None:
             self._projects_config = config.edit_projects()
@@ -499,9 +500,11 @@ class GitHubProject(Installable):
         installed_files = self.installed_files
         project_dir_files = set(map(self.project_relative_fspath,
                                     (p for p in self.directory.rglob('*')
-                                     if not (p.is_dir() or p.is_relative_to(config.project_state_directory(self.name))))))
+                                     if
+                                     not (p.is_dir() or p.is_relative_to(config.project_state_directory(self.name))))))
         unknown_files = project_dir_files - set(installed_files)
-        return [ProjectFile(self, f) for f in self.installed_files] + [ProjectFile(self, f, unregistered=True) for f in unknown_files]
+        return [ProjectFile(self, f) for f in self.installed_files] + [ProjectFile(self, f, unregistered=True) for f in
+                                                                       unknown_files]
 
     def uninstall(self, keep_assets=False):
         count = 0
@@ -521,7 +524,8 @@ class GitHubProject(Installable):
                         count += 1
                         logger.debug('uninstalled %s', project_file)
                     else:
-                        logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op', project_file, self)
+                        logger.warning('%s (belonging to %s) does not exist, so uninstalling it is a no-op',
+                                       project_file, self)
                     self.unregister_installed_file(project_file.path)
                 except IOError as e:
                     logger.error('Unable to delete %s (%s) while uninstalling %s', project_file, e, self)
@@ -536,8 +540,8 @@ class GitHubProject(Installable):
         # persist changed state
         self.state['installed'] = None
         self.save()
-        logger.info('Removed %d files and directories of project %s, %s assets', count, self, 'keeping' if keep_assets else 'including')
-
+        logger.info('Removed %d files and directories of project %s, %s assets', count, self,
+                    'keeping' if keep_assets else 'including')
 
     _directory: Optional[Path] = None
 
@@ -563,7 +567,8 @@ class GitHubProject(Installable):
             if repo in projects:
                 ex_config = projects[repo]
                 if 'url' in ex_config and ex_config['url'] != url:
-                    raise ValueError(f'Project {name} already exists with URL {projects.get("url")} instead of {url}. Please provide an explicit name.')
+                    raise ValueError(
+                        f'Project {name} already exists with URL {projects.get("url")} instead of {url}. Please provide an explicit name.')
             self.name = repo
             self.config['url'] = url
             self.config['kind'] = 'github'
@@ -572,7 +577,8 @@ class GitHubProject(Installable):
         else:
             self.name = name
             if project_config is not None and self.config != project_config:
-                logger.warning('Project %s: Overwriting previous config, %s, with new config %s', name, self.config, project_config)
+                logger.warning('Project %s: Overwriting previous config, %s, with new config %s', name, self.config,
+                               project_config)
                 self.config = project_config
             self.user, self.repo = self.parse_github_url(self.config['url'])
 
@@ -633,10 +639,10 @@ class GitHubProject(Installable):
         """
         old_cwd = Path.cwd()
         chdir(self.directory)
-        #logger.debug('Changed into project directory: %s (from %s)', self.directory, old_cwd)
+        # logger.debug('Changed into project directory: %s (from %s)', self.directory, old_cwd)
         yield self.directory
         chdir(old_cwd)
-        #logger.debug('Changed back to %s', old_cwd)
+        # logger.debug('Changed back to %s', old_cwd)
 
     def update(self, all_releases=False) -> bool:
         """
@@ -676,7 +682,8 @@ class GitHubProject(Installable):
         elif isinstance(releases, Mapping):
             return [GitHubRelease(releases)]
         else:
-            return [GitHubRelease(r) for r in sorted(releases, key=itemgetter('created_at'), reverse=True)]  # type:ignore #- if its not a list, its a mapping
+            return [GitHubRelease(r) for r in sorted(releases, key=itemgetter('created_at'),
+                                                     reverse=True)]  # type:ignore #- if its not a list, its a mapping
 
     def select_release(self) -> Optional[Release]:
         release_config = self.config.get('release', '')
@@ -684,8 +691,9 @@ class GitHubProject(Installable):
         if not releases:
             return None
         if release_config == 'latest':
-            return first((release for release in releases if not release.data['prerelease'] and not release.data['draft']),
-                         default=None)
+            return first(
+                    (release for release in releases if not release.data['prerelease'] and not release.data['draft']),
+                    default=None)
         elif release_config == 'pre':
             return first((release for release in releases if not release.data['draft']), default=None)
         else:
@@ -707,9 +715,9 @@ class GitHubProject(Installable):
                     result.append(GithubAsset(self, release, pattern, install, matching_descs[0]))
                     if len(matching_descs) > 1:
                         logger.warning(
-                            '%s %s: %d assets match %s (%s). This is not supported, arbitrarily using the first one.',
-                            self.name, release, len(matching_descs), pattern,
-                            ', '.join(a['name'] for a in matching_descs))
+                                '%s %s: %d assets match %s (%s). This is not supported, arbitrarily using the first one.',
+                                self.name, release, len(matching_descs), pattern,
+                                ', '.join(a['name'] for a in matching_descs))
         else:
             for desc in release.data['assets']:
                 result.append(GithubAsset(self, release, None, None, desc))
@@ -793,11 +801,13 @@ class GitHubProject(Installable):
                     scriptpath = Path(scriptfile.name)
                 try:
                     scriptpath.chmod(0o700)
-                    result = run([scriptpath], env=project_env, cwd=project_directory, capture_output=capture, text=True)
+                    result = run([scriptpath], env=project_env, cwd=project_directory, capture_output=capture,
+                                 text=True)
                 finally:
                     scriptpath.unlink()
             else:
-                result = run(script, shell=True, env=project_env, cwd=project_directory, capture_output=capture, text=True)
+                result = run(script, shell=True, env=project_env, cwd=project_directory, capture_output=capture,
+                             text=True)
             if record_new_files is not None:
                 files_after = set(project_directory.glob('**/*'))
                 new_files = files_after - files_before
@@ -813,6 +823,7 @@ class GitHubProject(Installable):
     def __str__(self):
         return self.name
 
+
 class GithubAsset(Installable):
     project: GitHubProject
     release: str
@@ -823,7 +834,7 @@ class GithubAsset(Installable):
     source: Path
 
     def __init__(self, project: GitHubProject, release: Release,
-                 #spec: MutableMapping | None,
+                 # spec: MutableMapping | None,
                  match: Optional[str] = None,
                  install: str | Mapping | None = None,
                  asset_desc: Mapping | None = None) -> None:
@@ -903,7 +914,7 @@ class GithubAsset(Installable):
             return updated
 
 
-def get_project(name: str, must_exist: bool = True) -> GitHubProject:      # TODO refactor
+def get_project(name: str, must_exist: bool = True) -> GitHubProject:  # TODO refactor
     """
     Returns an existing project
     """
