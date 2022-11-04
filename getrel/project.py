@@ -1,18 +1,22 @@
 from collections.abc import Mapping, MutableMapping
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from glob import glob
 from operator import itemgetter
 from os import environ, fspath, chdir
 import re
 from fnmatch import fnmatch
+from functools import total_ordering
 import zipfile
 import tarfile
 
 from pathlib import Path
 from typing import Optional, Any
 
+import dateutil
 import tomlkit
+from dateutil.parser import isoparse
 
 from .config import BaseSettings
 from . import config
@@ -22,9 +26,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@total_ordering
 class Release(Mapping):
     version: str
+    date: datetime
     data: Mapping
+
+    def __init__(self, version: str, date: datetime, data: Optional[Mapping] = None):
+        self.version = version
+        self.date = date
+        self.data = data or {}
 
     def __str__(self):
         return self.version
@@ -40,6 +51,41 @@ class Release(Mapping):
 
     def __iter__(self):
         return iter(self.data)
+
+    def __lt__(self, other: 'Release'):
+        if self.date and other.date:
+            return self.date < other.date
+        else:
+            return self.version.split() < other.version.split()
+
+    def __eq__(self, other: 'Release'):
+        if isinstance(other, Release):
+            if self.date and other.date:
+                return self.date == other.date
+            else:
+                return self.version == other.version
+        elif isinstance(other, datetime) and self.date:
+            return self.date == other
+        elif isinstance(other, str) and self.version:
+            return self.version == other
+
+    def __bool__(self):
+        return self.version is not None or self.date is not None
+
+    def todict(self):
+        return dict(
+                version=self.version,
+                date=self.date.isoformat())
+
+    @classmethod
+    def fromdict(cls, src):
+        if isinstance(src, Mapping):
+            version = src['version']
+            date = isoparse(src['date'])
+        else:
+            version = src
+            date = None
+        return cls(version=version, date=date)
 
 
 class ProjectFile:
@@ -80,8 +126,6 @@ class ProjectFile:
 
         self.boring = not (self.external or self.install_spec or self.unregistered or self.asset)
 
-
-
     def __hash__(self):
         return hash(self.project.name) + hash(self.path)
 
@@ -92,12 +136,11 @@ class ProjectFile:
         return self.project.project_relative_fspath(self.path)
 
 
-
 class GitHubRelease(Release):
-
     def __init__(self, release_record: Mapping):
-        self.data = release_record
-        self.version = release_record['tag_name']
+        super().__init__(version=release_record['tag_name'],
+                         date=isoparse(release_record['published_at']),
+                         data=release_record)
 
 
 class Installable:
@@ -703,8 +746,8 @@ class GitHubProject(Installable):
                     self.register_installed_file(*new_files)
 
         with self.state as state:
-            if release is not None: # FIXME how can this happen?
-                state['installed'] = release.version
+            if release is not None:  # FIXME how can this happen?
+                state['installed'] = release.todict()
 
     @property
     def needs_install(self):

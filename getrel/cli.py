@@ -19,11 +19,12 @@ import typer
 from pygments.lexers.configs import TOMLLexer
 from rich.live import Live
 from rich.markup import render
+from rich.progress import track
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
-from .project import GitHubProject, GithubAsset, get_project, ProjectFile
+from .project import GitHubProject, GithubAsset, get_project, ProjectFile, Release
 import questionary
 from difflib import SequenceMatcher
 import fnmatch

@@ -144,12 +144,15 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
         False if the data has not been newer.
         a response if return_response is true and True would have been returned.
     """
-    last_requested_ago = datetime.now() - datetime.fromisoformat(cache['last-request'])
-    if 'last-request' in cache and (last_requested_ago) <= settings.fetch_delay:  # type:ignore
+    last_requested_ago = None
+    if 'last-request' in cache and (last_requested_ago := datetime.now() - datetime.fromisoformat(
+            cache['last-request'])) <= settings.fetch_delay:  # type:ignore
         logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago, settings.fetch_delay)
         return False
-    last_modified_ = (datetime.now() - parse_http_date(cache['Last-Modified'])) if 'Last-Modified' in cache else timedelta(0)
-    if 'Last-Modified' in cache and last_modified_ <= settings.update_delay:  # type:ignore
+    last_modified_ = None
+    if 'Last-Modified' in cache and (last_modified_ := (
+            datetime.now() - parse_http_date(cache['Last-Modified'])) if 'Last-Modified' in cache else timedelta(
+            0)) <= settings.update_delay:  # type:ignore
         logger.debug('Not fetching %s, last modified less then %s ago (%s)', url, last_modified_, settings.update_delay)
         return False
     else:
