@@ -15,16 +15,15 @@ from .config import get_progress, settings
 
 logger = logging.getLogger(__name__)
 
-
 try:
     from humanize import naturalsize
 except ImportError:
     def naturalsize(size: int, **kwargs):
         return str(size)
 
-
 T = TypeVar('T')
 _no_default = object()
+
 
 def first(iterable: Iterable[T], *, default=_no_default, strict=False) -> T:
     """
@@ -44,7 +43,7 @@ def first(iterable: Iterable[T], *, default=_no_default, strict=False) -> T:
         if strict or default is _no_default:
             raise ValueError(f'{iterable} is empty')
         else:
-            return default # type: ignore
+            return default  # type: ignore
     if strict:
         try:
             second = next(iterator)
@@ -58,7 +57,7 @@ def first(iterable: Iterable[T], *, default=_no_default, strict=False) -> T:
 try:
     import magic
 except ImportError:
-    magic = None 
+    magic = None
 
 
 class FileType:
@@ -74,10 +73,10 @@ class FileType:
         archive: if True, its an archive we can unpack
     """
 
-    file: Path 
+    file: Path
     mime: Optional[str]
     description: str
-    executable: bool = False 
+    executable: bool = False
     archive: bool = False
 
     def __init__(self, file: Path):
@@ -118,7 +117,6 @@ class FileType:
         return result
 
 
-
 def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | None = None, json: bool | str = False,
                    return_response: bool = False, cache_headers: bool = False, headers=None, message=None, **kwargs):
     """
@@ -147,7 +145,8 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
     last_requested_ago = None
     if 'last-request' in cache and (last_requested_ago := datetime.now() - datetime.fromisoformat(
             cache['last-request'])) <= settings.fetch_delay:  # type:ignore
-        logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago, settings.fetch_delay)
+        logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago,
+                     settings.fetch_delay)
         return False
     last_modified_ = None
     if 'Last-Modified' in cache and (last_modified_ := (
@@ -196,7 +195,7 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
             download_file.parent.mkdir(parents=True, exist_ok=True)
             with download_file.open('wb') as f:
                 progress.start_task(task_id)
-                for chunk in response.iter_content(chunk_size=512*1024):
+                for chunk in response.iter_content(chunk_size=512 * 1024):
                     progress.advance(task_id, len(chunk))
                     f.write(chunk)
         elif json:
@@ -254,4 +253,4 @@ def shorten_list(source: Sequence[T], predicate: Callable[[T], bool], min_items:
 
 
 def parse_http_date(http_date: str) -> datetime:
-    return datetime(*eut.parsedate(http_date)[:6]) # type:ignore
+    return datetime(*eut.parsedate(http_date)[:6])  # type:ignore
