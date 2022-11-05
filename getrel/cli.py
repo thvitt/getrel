@@ -261,6 +261,7 @@ def update(projects: List[str] = typer.Argument(None, autocompletion=_project_na
         project = get_project(name, must_exist=True)
         if project.update():
             updated.append(project)
+            logger.info('%s can be upgraded', project)
     return updated
 
 
