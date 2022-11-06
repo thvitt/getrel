@@ -8,17 +8,13 @@ Additionally, it offers an interactive wizard that helps to configure a new tool
 
 Currently, only GitHub releases are supported. Support for arbitrary websites is planned. Other sources may be included as required.
 
-## Installation
-
-1. Install getrel either by downloading the binary from the releases page or using pipx by `pipx install getrel`.
-
 ## Tasks
 
 ### Interactively install a file from github
 
-2. Use `getrel add <URL>` to interactively configure and install the tool at URL. E.g., try `getrel add https://github.com/sharkdp/fd` to install [fd](https://github.com/sharkdp/fd).
+Use `getrel add <URL>` to interactively configure and install the tool at URL. E.g., try `getrel add https://github.com/sharkdp/fd` to install [fd](https://github.com/sharkdp/fd).
 
-Run `getrel install --update` to update all configured tools to the latest version according to the configuration. Use `getrel uninstall <tool> to uninstall a tool. Run `getrel --help` for a list of commands, and `getrel <command> --help` for all options to the given command.
+Run `getrel upgrade --update` to update all configured tools to the latest version according to the configuration. Use `getrel uninstall <tool> to uninstall a tool. Run `getrel --help` for a list of commands, and `getrel <command> --help` for all options to the given command.
 
 ## Concepts and configuration
 
@@ -45,9 +41,9 @@ release = "latest"
     * `url` is the URL to the GitHub project's root page.
     * `release` specifies which release is to be installed. This field can take one of the following forms:
 
-	* The keyword `"latest"` to always install the latest stable release.
-	* `"pre"` to always install the latest version, even if it is marked as prerelease.
-	* A version string, or a shell glob pattern. This will select the latest version that matches the given pattern or string. This will be matched against the tag name. E.g., `"v8.*"` will select the newest version starting with `v8.`.
+        * the keyword `"latest"` to always install the latest stable release.
+        * `"pre"` to always install the latest version, even if it is marked as prerelease.
+        * A version string, or a shell glob pattern. This will select the latest version that matches the given pattern or string. This will be matched against the tag name. E.g., `"v8.*"` will select the newest version starting with `v8.`.
 * `assets` lists the files that should be downloaded for the selected release, and what to do with them after download (see the Installation section below).
 * `install` contains a table of installation instructions, see below
 * `postinstall` can contain an installation script, see the next section.
