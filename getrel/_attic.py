@@ -16,7 +16,8 @@ console = Console()
 
 # TODO refactor
 def download_releases(project: str):
-    if m := re.match(r'https://(?:[^/]+\.)?github.com/(\w+/\w+)', project):
+    m = re.match(r'https://(?:[^/]+\.)?github.com/(\w+/\w+)', project)
+    if m:
         project = m.group(1)
     url = f'https://api.github.com/repos/{project}/releases'
     releases_resp = session.get(url, headers={'Accept': 'application/vnd.github.v3+json'})

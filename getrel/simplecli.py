@@ -1,4 +1,6 @@
 import sys
+from typing import List
+
 from .project import get_project
 from .config import edit_projects 
 import argparse
@@ -16,7 +18,7 @@ def _install(args):
 def _upgrade(args):
     _do_install(args.projects, update=True)
 
-def _do_install(project_names: list[str], update: bool = False):
+def _do_install(project_names: List[str], update: bool = False):
     print(project_names)
     if not project_names:
         project_names = list(edit_projects())

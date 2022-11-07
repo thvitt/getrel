@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Collection, Optional, List, Iterable
+from typing import Collection, Optional, List, Iterable, Tuple
 
 import humanize
 import rich.table
@@ -734,7 +734,8 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
                     del projects[name]
                     logger.warning('Removed invalid config for %s', name)
                 elif answer == 'configure':
-                    if url := project_config.get('url'):
+                    url = project_config.get('url')
+                    if url:
                         add(url, detailed=False)
                     else:
                         add(name)
@@ -767,7 +768,7 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
 def pathtree(paths: Iterable[Path], sort=True) -> Tree:
     sorted_paths = sorted(paths, key=lambda p: p.parts) if sort else list(paths)
     root = Tree('', hide_root=False, guide_style='dim')
-    stack: list[tuple[Optional[Path], Tree]] = [(None, root)]
+    stack: List[Tuple[Optional[Path], Tree]] = [(None, root)]
 
     for path in sorted_paths:
         while not (stack[-1][0] is None or path.is_relative_to(stack[-1][0])):
@@ -813,7 +814,7 @@ def rename(project_name: str = typer.Argument(..., autocompletion=_project_names
 
 
 
-def dir_tree(file: Path, parent: Tree | None = None) -> Tree:
+def dir_tree(file: Path, parent: Optional[Tree] = None) -> Tree:
     if parent is None:
         t = Tree(str(file))
     else:
@@ -828,7 +829,7 @@ class NoPatternError(ValueError):
     ...
 
 
-def identifying_pattern(alternatives: list[str], selection: str, version: Optional[str] = None, avoid_minimal=False) -> str:
+def identifying_pattern(alternatives: List[str], selection: str, version: Optional[str] = None, avoid_minimal=False) -> str:
     """
     Given a selection string and a set of alternatives, this function returns a version of selection 
     that replaces all substrings common to all the selection and all alternatives with a '*'. E.g.,

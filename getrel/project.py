@@ -11,8 +11,7 @@ from functools import total_ordering
 import zipfile
 import tarfile
 
-from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Union, List, Tuple
 
 import dateutil
 import tomlkit
@@ -24,6 +23,26 @@ from .utils import naturalsize, first, fetch_if_newer
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    import pathlib2 as pathlib
+    logger.debug('Imported pathlib2')
+except ImportError:
+    logger.debug('Failed to import pathlib2, using regular pathlib')
+
+from pathlib import Path
+
+if not hasattr(Path, 'is_relative_to'):
+    # missing in pathlib2, present in 3.9ff
+    def _is_relative_to(self, other):
+        try:
+            self.relative_to(other)
+            return True
+        except ValueError:
+            return False
+
+    Path.is_relative_to = _is_relative_to
+
 
 
 @total_ordering
@@ -100,7 +119,7 @@ class ProjectFile:
     external: bool = False
     boring: bool = False
 
-    def __init__(self, project: "GitHubProject", file: Path | str, unregistered=False):
+    def __init__(self, project: "GitHubProject", file: Union[Path, str], unregistered=False):
         self.project = project
         self.path = project.resolve_path(file)
         self.unregistered = unregistered
@@ -323,7 +342,7 @@ class Installable:
         self.project.register_installed_file(*files)
         return [files]
 
-    def _actions_from_mapping(self, action_specs: Mapping) -> list[Path]:
+    def _actions_from_mapping(self, action_specs: Mapping) -> List[Path]:
         """
         Runs the actions from the given mapping. Assumes to be in the project directory.
 
@@ -436,7 +455,7 @@ class GitHubProject(Installable):
     _projects_config: Optional[BaseSettings] = None
 
     @property
-    @lru_cache
+    @lru_cache()
     def config(self) -> MutableMapping:
         if self._projects_config is None:
             self._projects_config = config.edit_projects()
@@ -450,7 +469,7 @@ class GitHubProject(Installable):
             self._projects_config = config.edit_projects()
         self._projects_config[self.name] = value
 
-    def project_relative_fspath(self, orig: Path | str) -> str:
+    def project_relative_fspath(self, orig: Union[Path, str]) -> str:
         """
         returns a string represantation that is relative to the project directory
         or absolute, with symlinks resolved
@@ -466,7 +485,7 @@ class GitHubProject(Installable):
     def configured(self) -> bool:
         return all(k in self.config for k in ['url', 'release', 'assets'])
 
-    def resolve_path(self, orig: Path | str) -> Path:
+    def resolve_path(self, orig: Union[Path, str]) -> Path:
         """
         Returns an absolute path, resolved against the project directory
         """
@@ -474,7 +493,7 @@ class GitHubProject(Installable):
             return Path(orig).absolute()
 
     @property
-    def installed_files(self) -> list[str]:
+    def installed_files(self) -> List[str]:
         """
         The list of files installed by this project's install() routine. This always returns project relative paths.
         """
@@ -496,7 +515,7 @@ class GitHubProject(Installable):
             else:
                 logger.debug('%s not registered, cannot unregister', file)
 
-    def get_installed(self, include_unknown=False) -> list[ProjectFile]:
+    def get_installed(self, include_unknown=False) -> List[ProjectFile]:
         installed_files = self.installed_files
         project_dir_files = set(map(self.project_relative_fspath,
                                     (p for p in self.directory.rglob('*')
@@ -559,7 +578,8 @@ class GitHubProject(Installable):
         if name not in projects and project_config is None:
             if re.match('https?://', name):
                 user, repo = self.parse_github_url(name)
-            elif m := re.match(r'([^/\s]+)/([^/\s]+)', name):
+            elif re.match(r'([^/\s]+)/([^/\s]+)', name):
+                m = re.match(r'([^/\s]+)/([^/\s]+)', name)
                 user, repo = m.groups()
             else:
                 raise ValueError(f'Project {name} needs an URL')
@@ -594,21 +614,23 @@ class GitHubProject(Installable):
         self.asset_cache.save()
 
     @staticmethod
-    def parse_github_url(url: str) -> tuple[str, str]:
+    def parse_github_url(url: str) -> Tuple[str, str]:
         """
         Looks for user and project in a github url.
 
         Returns:
             user, repo
         """
-        if m := re.match(r'https?://(?:[^/]+\.)?github.com/([^/?\s]+)/([^/?\s]+)', url):
+        m = re.match(r'https?://(?:[^/]+\.)?github.com/([^/?\s]+)/([^/?\s]+)', url)
+        if m:
             return m.group(1), m.group(2)
         else:
             raise ValueError(f'{url} is not the URL of a GitHub project')
 
     def augment_config(self):
         if 'github' not in self.config and 'url' in self.config:
-            if m := re.match(r'https?://(?:[^/]+\.)?github.com/(\w+)/(\w+)', self.config['url']):
+            m = re.match(r'https?://(?:[^/]+\.)?github.com/(\w+)/(\w+)', self.config['url'])
+            if m:
                 self.user = m.group(1)
                 self.repo = m.group(2)
                 self.config['github'] = self.user + '/' + self.repo
@@ -675,7 +697,7 @@ class GitHubProject(Installable):
                 return False
 
     @property
-    def releases(self) -> list[Release]:
+    def releases(self) -> List[Release]:
         releases = self.release_cache.get('data')
         if not releases:
             return []
@@ -700,7 +722,7 @@ class GitHubProject(Installable):
             return first((release for release in releases if
                           fnmatch(release.version, release_config) and not release.data['draft']), default=None)
 
-    def get_assets(self, release=None, configured=True) -> list['GithubAsset']:
+    def get_assets(self, release=None, configured=True) -> List['GithubAsset']:
         result = []
         if release is None:
             release = self.select_release()
@@ -840,7 +862,7 @@ class GitHubProject(Installable):
 class GithubAsset(Installable):
     project: GitHubProject
     release: str
-    install_spec: MutableMapping | None
+    install_spec: Optional[MutableMapping]
     asset_desc: Mapping
     cache: MutableMapping
     needs_download: bool
@@ -849,8 +871,8 @@ class GithubAsset(Installable):
     def __init__(self, project: GitHubProject, release: Release,
                  # spec: MutableMapping | None,
                  match: Optional[str] = None,
-                 install: str | Mapping | None = None,
-                 asset_desc: Mapping | None = None) -> None:
+                 install: Optional[Optional[Union[str, Mapping]]] = None,
+                 asset_desc: Optional[Mapping] = None) -> None:
         """
         Each asset is associated with:
             - the current project
@@ -873,7 +895,7 @@ class GithubAsset(Installable):
     def configured(self):
         return self.install_spec is not None
 
-    def configure(self, match: str | None = None, install: str | Mapping | None = None):
+    def configure(self, match: Optional[str] = None, install: Union[str, Mapping, None] = None):
         """
         Adds or updates the asset's configuration in the project.
         """

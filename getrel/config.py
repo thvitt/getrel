@@ -5,7 +5,7 @@ from datetime import timedelta
 from difflib import unified_diff
 from operator import getitem
 from pathlib import Path
-from typing import Optional, TypeVar
+from typing import Optional, TypeVar, Union
 from contextlib import contextmanager
 from functools import lru_cache
 from unittest.mock import MagicMock
@@ -99,7 +99,7 @@ class BaseSettings(ABC, MutableMapping):
                     logger.debug('Created %s, content: %s', self.store, new_content)
             self.last_state = new_content
 
-    def __init__(self, file: Path | str, data: Mapping | None = None, save_on_error=True) -> None:
+    def __init__(self, file: Union[Path, str], data: Optional[Mapping] = None, save_on_error=True) -> None:
         """
         Create, load and initialize a new settings instance.
 
@@ -184,12 +184,12 @@ class JSONSettings(BaseSettings):
         return dict()
 
 
-@lru_cache
+@lru_cache()
 def edit_projects() -> Settings:
     return Settings(xdg.xdg_config_home() / APP_NAME / 'projects.toml')
 
 
-def project_directory(project_name: str | None = None) -> Path:
+def project_directory(project_name: Optional[str] = None) -> Path:
     root = xdg.xdg_data_home() / APP_NAME
     if project_name:
         return root / project_name
@@ -204,7 +204,7 @@ def project_state_directory(project_name: str, create=False) -> Path:
     return path
 
 
-def verb_or_spec(value: str | Mapping | None, allowed_verbs=None):
+def verb_or_spec(value: Union[str, Mapping, None], allowed_verbs=None):
     if isinstance(value, Mapping):
         items = value.items()
         if len(items) == 0:
@@ -286,7 +286,7 @@ class _ProgramSettings(Settings):
 
 settings = _ProgramSettings(xdg.xdg_config_home() / APP_NAME / 'settings.toml')
 
-def expand_path(path: str | os.PathLike, project_name=None, **kwargs) -> Path:
+def expand_path(path: Union[str, os.PathLike], project_name=None, **kwargs) -> Path:
     if project_name:
         kwargs['PROJECT'] = project_name
         kwargs['PROJECT_DIR'] = project_directory(project_name)
@@ -304,7 +304,7 @@ def update_environ(extra_env):
         del os.environ[key]
 
 
-@lru_cache
+@lru_cache()
 def edit_project_state(project_name: str) -> BaseSettings:
     return JSONSettings(project_state_directory(project_name) / 'state.json')
 

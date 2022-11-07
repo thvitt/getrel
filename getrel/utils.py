@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 from tarfile import is_tarfile
-from typing import TypeVar, Iterable, MutableMapping, Sequence, Callable
+from typing import TypeVar, Iterable, MutableMapping, Sequence, Callable, Optional, Union, Dict
 import stat
 from mimetypes import guess_type
 from typing import Optional
@@ -117,7 +117,8 @@ class FileType:
         return result
 
 
-def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | None = None, json: bool | str = False,
+def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Optional[Path] = None, json: Union[
+    bool, str] = False,
                    return_response: bool = False, cache_headers: bool = False, headers=None, message=None, **kwargs):
     """
     Retrieves the given URL unless it has not been modified.
@@ -137,26 +138,32 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
             to the string and handle it as if it were True otherwise.
         return_response:
             return the response object if a full 200 response has been retrieved.
+        message:
+            string to show on the progress bar
+        headers:
+            additional request headers
+        cache_headers:
+            if True, cache response headers in the cache mapping
     Returns:
         True if actual data has been retrieved, updating the cache dict and optionally writing to the download_file as side effect.
         False if the data has not been newer.
         a response if return_response is true and True would have been returned.
     """
     last_requested_ago = None
-    if 'last-request' in cache and (last_requested_ago := datetime.now() - datetime.fromisoformat(
-            cache['last-request'])) <= settings.fetch_delay:  # type:ignore
-        logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago,
-                     settings.fetch_delay)
-        return False
+    if 'last-request' in cache:
+        last_requested_ago = datetime.now() - datetime.fromisoformat(cache['last-request'])
+        if last_requested_ago  <= settings.fetch_delay:  # type:ignore
+            logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago,
+                         settings.fetch_delay)
+            return False
     last_modified_ = None
-    if 'Last-Modified' in cache and (last_modified_ := (
-            datetime.now() - parse_http_date(cache['Last-Modified'])) if 'Last-Modified' in cache else timedelta(
-            0)) <= settings.update_delay:  # type:ignore
-        logger.debug('Not fetching %s, last modified less then %s ago (%s)', url, last_modified_, settings.update_delay)
-        return False
-    else:
-        logger.debug('%s last modified %s (> %s), last requested %s (> %s)', url, last_modified_, settings.update_delay,
-                     last_requested_ago, settings.fetch_delay)
+    if 'Last-Modified' in cache:
+        last_modified_ = datetime.now() - parse_http_date(cache['Last-Modified'])
+        if last_modified_ <= settings.update_delay:  # type:ignore
+            logger.debug('Not fetching %s, last modified less then %s ago (%s)', url, last_modified_, settings.update_delay)
+            return False
+    logger.debug('%s last modified %s (> %s), last requested %s (> %s)', url, last_modified_, settings.update_delay,
+                 last_requested_ago, settings.fetch_delay)
 
     with get_progress(transient=True) as progress:
         progress_msg = str(message or download_file or url)
@@ -217,7 +224,7 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Path | Non
             return True
 
 
-def unique_substrings(strings: Iterable[str]) -> dict[str, str]:
+def unique_substrings(strings: Iterable[str]) -> Dict[str, str]:
     """
     Maps each given string to the shortest substring identifying the string within the list.
 

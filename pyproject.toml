@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "getrel"
-version = "0.1.0"
+version = "0.1.1"
 description = "Downloader for github releases"
 authors = ["Thorsten Vitt <thorsten.vitt@uni-wuerzburg.de>"]
 
@@ -8,7 +8,7 @@ authors = ["Thorsten Vitt <thorsten.vitt@uni-wuerzburg.de>"]
 getrel = "getrel:_main"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.11"
+python = ">=3.7,<3.12"
 requests = "^2.27.1"
 tomlkit = "^0.10.2"
 xdg = "^5.1.1"
@@ -19,6 +19,7 @@ humanize = {version = "^4.2.3", optional = true}
 python-magic = {version = "^0.4.27", optional = true}
 durations = "^0.3.3"
 python-dateutil = "^2.8.2"
+pathlib2 = {version = "^2.3.7.post1", allow-prereleases = true, python = "<3.9"}
 
 [tool.poetry.extras]
 tui = ["rich", "questionary", "typer", "humanize", "python-magic"]
