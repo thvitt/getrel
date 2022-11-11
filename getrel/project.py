@@ -226,7 +226,7 @@ class Installable:
             link = link / self.source.name
         if link.is_symlink():
             logger.warning('Overwriting link %s (which pointed to %s) with %s',
-                           link, link.readlink(), self.source)
+                           link, link.resolve(), self.source)
             link.unlink()
         elif link.exists():
             logger.error('%s: Refusing to overwrite %s with %s', self.project, link, self.source)
