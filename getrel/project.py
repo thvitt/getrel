@@ -225,8 +225,9 @@ class Installable:
         if str(arg).endswith('/') or link.is_dir():
             link = link / self.source.name
         if link.is_symlink():
-            logger.warning('Overwriting link %s (which pointed to %s) with %s',
-                           link, link.resolve(), self.source)
+            if link.resolve() != self.source.resolve():
+                logger.warning('Overwriting link %s (which pointed to %s) with %s',
+                               link, link.resolve(), self.source)
             link.unlink()
         elif link.exists():
             logger.error('%s: Refusing to overwrite %s with %s', self.project, link, self.source)
