@@ -281,17 +281,20 @@ def install(projects: List[str] = typer.Argument(None, autocompletion=_project_n
     updated = uninstalled = installed = 0
 
     for name in projects:
-        project = get_project(name, must_exist=True)
-        if update:
-            project.update()
-            updated += 1
-        do_upgrade = upgrade and project.needs_upgrade
-        if reinstall or project.needs_install or do_upgrade:
-            if uninstall and project.get_installed():
-                project.uninstall()
-                uninstalled += 1
-            project.install(force=reinstall)
-            installed += 1
+        try:
+            project = get_project(name, must_exist=True)
+            if update:
+                project.update()
+                updated += 1
+            do_upgrade = upgrade and project.needs_upgrade
+            if reinstall or project.needs_install or do_upgrade:
+                if uninstall and project.get_installed():
+                    project.uninstall()
+                    uninstalled += 1
+                project.install(force=reinstall)
+                installed += 1
+        except IOError as e:
+            logger.exception('Failed to install %s: %s', name, e)
     logger.info('%d projects updated, %d uninstalled and %d installed.', updated, uninstalled, installed)
 
 
