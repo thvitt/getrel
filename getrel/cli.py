@@ -730,8 +730,8 @@ def clean(yes: bool = typer.Option(False, "-y", "--yes", help="Answer Yes to all
                 console.print(Syntax(tomlkit.dumps({name: project.config}), 'toml'))
                 if not yes:
                     answer = questionary.select('Delete the project config (above)?',  [
-                        questionary.Choice('Yes, delete', value='yes', shortcut_key='y'), 
-                        questionary.Choice('Configure instead (run getrel add again)', value='configure', shortcut_key='c'), 
+                        questionary.Choice('Yes, delete', value='yes', shortcut_key='y'),
+                        questionary.Choice('Configure instead (run getrel add again)', value='configure', shortcut_key='c'),
                         questionary.Choice('No', value='no', shortcut_key='n')], use_shortcuts=True).ask()
                 if yes or answer == 'yes':
                     del projects[name]
@@ -834,9 +834,9 @@ class NoPatternError(ValueError):
 
 def identifying_pattern(alternatives: List[str], selection: str, version: Optional[str] = None, avoid_minimal=False) -> str:
     """
-    Given a selection string and a set of alternatives, this function returns a version of selection 
+    Given a selection string and a set of alternatives, this function returns a version of selection
     that replaces all substrings common to all the selection and all alternatives with a '*'. E.g.,
-    
+
     >>> identifying_pattern(['foo-windows.tar.gz', 'foo-macos.tar.gz'],'foo-linux.tar.gz')
     '*linux*'
     """
@@ -896,9 +896,9 @@ def identifying_pattern(alternatives: List[str], selection: str, version: Option
     common_idx = set(range(len(selection)))
     for alternative in alternatives:
         matcher = SequenceMatcher(a=selection, b=alternative)
-        matching_idx = set(chain.from_iterable(range(m.a, m.a+m.size) for m in matcher.get_matching_blocks()))        
-        common_idx &= matching_idx        
-    
+        matching_idx = set(chain.from_iterable(range(m.a, m.a+m.size) for m in matcher.get_matching_blocks()))
+        common_idx &= matching_idx
+
     # create pattern from that
     pattern_parts =  []
     for i in range(len(selection)):
@@ -908,7 +908,7 @@ def identifying_pattern(alternatives: List[str], selection: str, version: Option
         else:
             pattern_parts.append(selection[i])
     pattern = ''.join(pattern_parts)
-    
+
     # assert correctness
 
     return pattern

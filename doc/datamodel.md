@@ -11,5 +11,3 @@ A release represents a specific version of a project. It has a type (currently, 
 | pre      | bool | prerelease | if true, its a prerelease (not considered for latest) |
 | latest   | bool |            | if true, this is the latest release                   |
 | assets   | list | assets     | files to download                                     |
-
-

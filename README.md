@@ -57,7 +57,7 @@ Download and installation for each project are controlled by two subtables, `ass
 
 The **assets** table maps shell glob patterns of assets to download to installation specifications. Each key in the table is matched against the assets of the current release. Each asset that matches will be downloaded to the project directory, then the associated installation specification is run on it.
 
-Afterwards, the **install** table is evaluated. Each key in the table is matched against the files created by the installation in the project directory. For each match, the associated installation specification is run. 
+Afterwards, the **install** table is evaluated. Each key in the table is matched against the files created by the installation in the project directory. For each match, the associated installation specification is run.
 
 Finally, if a `postinstall` key is present, it will be interpreted as shell script or command and run in the project directory.
 

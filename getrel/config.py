@@ -25,8 +25,8 @@ APP_NAME = 'getrel'
 
 """
 - ~/.config/{APP_NAME}/settings.toml  contains the optional configuration file
-- ~/.config/{APP_NAME}/projects.toml  has 
-- ~/.local/{APP_NAME}/{project} is the project specific 
+- ~/.config/{APP_NAME}/projects.toml  has
+- ~/.local/{APP_NAME}/{project} is the project specific
 """
 
 console = None
@@ -38,19 +38,19 @@ class BaseSettings(ABC, MutableMapping):
     ``settings = Settings('foo.toml')`` create a new settings object and load the data from foo.toml,
     if that file exists, otherwise an empty TOML document is created. The data can be accessed using
     settings.data or directly (e.g., 'settings["key"]`). ``settings.save()`` will save the data
-    back to foo.toml, creating it and its parent directories if needed. 
+    back to foo.toml, creating it and its parent directories if needed.
 
     When used as a context manager, the settings file will be saved automatically upon
     successfully leaving the `with` block.
 
-    This is the abstract base class. For support for a specific file format, subclass 
+    This is the abstract base class. For support for a specific file format, subclass
     and implement the three static methods dumps() to serialize data, loads() to de serialize
     data and new_data() to create a new settings record.
 
     Attributes:
         store: the file used to store the data. Not guaranteed to exist (e.g., for a new document')
         data: toml document with the data
-    
+
     """
     store: Path
     data: MutableMapping
@@ -81,7 +81,7 @@ class BaseSettings(ABC, MutableMapping):
 
     def save(self, file: Optional[Path] = None, force: bool = False):
         """
-        Serializes the data and stores it to the given file, or to self.store. 
+        Serializes the data and stores it to the given file, or to self.store.
         Parent directories are created as needed, the file is overwritten if it
         exists.
         """

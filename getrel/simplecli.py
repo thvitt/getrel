@@ -2,7 +2,7 @@ import sys
 from typing import List
 
 from .project import get_project
-from .config import edit_projects 
+from .config import edit_projects
 import argparse
 
 from getrel import project
@@ -29,16 +29,16 @@ def _do_install(project_names: List[str], update: bool = False):
             project.install()
         except Exception as e:
             logger.error('Failed to install %s: %s', project_name, e, exc_info=True)
-            
+
 
 def main():
     p = argparse.ArgumentParser(description="""
-            Simple CLI for getrel. 
+            Simple CLI for getrel.
 
-            Install using the 'tui' extra to get more and fancier commands 
+            Install using the 'tui' extra to get more and fancier commands
         """)
     sub = p.add_subparsers()
-    
+
     install = sub.add_parser('install')
     install.set_defaults(func=_install)
     install.add_argument('projects', nargs='*')

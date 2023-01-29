@@ -445,7 +445,7 @@ class GitHubProject(Installable):
         install: runs the install and post-install rules on the downloaded assets [download]
         uninstall: removes files except for assets
         clear: uninstalls and then removes the project directory and state [uninstall]
-        
+
 
     Additional Operations:
 
@@ -879,7 +879,7 @@ class GithubAsset(Installable):
             - the current project
             - a release (in form of a concrete release ID)
             - an asset specification (part of the project configuration)
-            - an asset cache configuration 
+            - an asset cache configuration
         """
         self.project = project
         self.release = release

@@ -4,7 +4,7 @@ def _main():
         from .cli import app
         app()
     except ImportError as e:
-        from .simplecli import main 
+        from .simplecli import main
         main()
 
 if __name__ == '__main__':

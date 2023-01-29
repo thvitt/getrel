@@ -66,10 +66,10 @@ class FileType:
     path). It will use libmagic if available.
 
     Properties:
-        file: Path of the file 
+        file: Path of the file
         mime: detected MIME type (or None, if it could not be detected)
-        description: textual form of the type 
-        executable: if True, we guess it’s some kind of executable file 
+        description: textual form of the type
+        executable: if True, we guess it’s some kind of executable file
         archive: if True, its an archive we can unpack
     """
 
