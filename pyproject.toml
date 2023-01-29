@@ -8,7 +8,7 @@ authors = ["Thorsten Vitt <thorsten.vitt@uni-wuerzburg.de>"]
 getrel = "getrel:_main"
 
 [tool.poetry.dependencies]
-python = ">=3.7,<3.12"
+python = ">=3.8,<3.12"
 requests = "^2.27.1"
 tomlkit = "^0.10.2"
 xdg = "^5.1.1"
@@ -28,7 +28,9 @@ tui = ["rich", "questionary", "typer", "humanize", "python-magic"]
 pytest = "^7.1.2"
 pyinstaller = "^5.3"
 
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^3.0.1"
+
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
-
