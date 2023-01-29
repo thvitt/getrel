@@ -19,9 +19,10 @@ import xdg
 import tomlkit
 
 import logging
+
 logger = logging.getLogger(__name__)
 
-APP_NAME = 'getrel'
+APP_NAME = "getrel"
 
 """
 - ~/.config/{APP_NAME}/settings.toml  contains the optional configuration file
@@ -30,6 +31,7 @@ APP_NAME = 'getrel'
 """
 
 console = None
+
 
 class BaseSettings(ABC, MutableMapping):
     """
@@ -52,6 +54,7 @@ class BaseSettings(ABC, MutableMapping):
         data: toml document with the data
 
     """
+
     store: Path
     data: MutableMapping
     last_state: Optional[str]
@@ -74,7 +77,7 @@ class BaseSettings(ABC, MutableMapping):
     def load(self, file: Optional[Path] = None):
         if file is None:
             file = self.store
-        with file.open('rt', encoding='utf-8') as f:
+        with file.open("rt", encoding="utf-8") as f:
             self.data = self.loads(f.read())
         self.last_state = self.dumps(self.data)
         return self.data
@@ -94,12 +97,22 @@ class BaseSettings(ABC, MutableMapping):
             file.write_text(new_content)
             if logger.isEnabledFor(logging.DEBUG):
                 if self.last_state:
-                    logger.debug('Saved %s, diff: %s', self.store, '\n'.join(unified_diff(self.last_state.split('\n'), new_content.split('\n'))))
+                    logger.debug(
+                        "Saved %s, diff: %s",
+                        self.store,
+                        "\n".join(
+                            unified_diff(
+                                self.last_state.split("\n"), new_content.split("\n")
+                            )
+                        ),
+                    )
                 else:
-                    logger.debug('Created %s, content: %s', self.store, new_content)
+                    logger.debug("Created %s, content: %s", self.store, new_content)
             self.last_state = new_content
 
-    def __init__(self, file: Union[Path, str], data: Optional[Mapping] = None, save_on_error=True) -> None:
+    def __init__(
+        self, file: Union[Path, str], data: Optional[Mapping] = None, save_on_error=True
+    ) -> None:
         """
         Create, load and initialize a new settings instance.
 
@@ -119,7 +132,9 @@ class BaseSettings(ABC, MutableMapping):
             self.load()
         except Exception as e:
             self.data = self.new_data()
-            logger.debug('Could not load %s: %s. Using new data.', file, e, exc_info=True)
+            logger.debug(
+                "Could not load %s: %s. Using new data.", file, e, exc_info=True
+            )
 
         if data is not None:
             self.data.update(data)
@@ -150,7 +165,7 @@ class BaseSettings(ABC, MutableMapping):
         return len(self.data)
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}({str(self.store)!r}, {self.data!r})>'
+        return f"<{self.__class__.__name__}({str(self.store)!r}, {self.data!r})>"
 
 
 class Settings(BaseSettings):
@@ -170,7 +185,6 @@ class Settings(BaseSettings):
 
 
 class JSONSettings(BaseSettings):
-
     @staticmethod
     def dumps(data: MutableMapping) -> str:
         return json.dumps(data, indent=2)
@@ -186,7 +200,7 @@ class JSONSettings(BaseSettings):
 
 @lru_cache()
 def edit_projects() -> Settings:
-    return Settings(xdg.xdg_config_home() / APP_NAME / 'projects.toml')
+    return Settings(xdg.xdg_config_home() / APP_NAME / "projects.toml")
 
 
 def project_directory(project_name: Optional[str] = None) -> Path:
@@ -198,7 +212,7 @@ def project_directory(project_name: Optional[str] = None) -> Path:
 
 
 def project_state_directory(project_name: str, create=False) -> Path:
-    path = project_directory(project_name) / ('.' + APP_NAME)
+    path = project_directory(project_name) / ("." + APP_NAME)
     if create and not path.exists():
         path.mkdir(parents=True, exist_ok=True)
     return path
@@ -220,18 +234,23 @@ def verb_or_spec(value: Union[str, Mapping, None], allowed_verbs=None):
     return verb, arg
 
 
-T = TypeVar('T')
+T = TypeVar("T")
+
+
 class SettingAttribute:
 
     _no_default = object()
 
-    def __init__(self, name: str,
-                 default: T =_no_default,
-                 *,
-                 autosave: bool = False,
-                 dtype: Optional[typing.Type[T]] = None,
-                 parse: Optional[typing.Callable[[typing.Any], T]] = None,
-                 unparse: Optional[typing.Callable[[T], typing.Any]] = None):
+    def __init__(
+        self,
+        name: str,
+        default: T = _no_default,
+        *,
+        autosave: bool = False,
+        dtype: Optional[typing.Type[T]] = None,
+        parse: Optional[typing.Callable[[typing.Any], T]] = None,
+        unparse: Optional[typing.Callable[[T], typing.Any]] = None,
+    ):
         """
         Descriptor for saving stuff to a 'BaseSettings' instance.
 
@@ -274,22 +293,39 @@ class SettingAttribute:
         if self.autosave:
             obj.save()
 
+
 def _parse_duration(s: str) -> timedelta:
     return timedelta(seconds=Duration(str(s)).to_seconds())
 
+
 def _unparse_duration(d: timedelta) -> str:
-    return str(int(d.total_seconds()))+'s'
+    return str(int(d.total_seconds())) + "s"
+
 
 class _ProgramSettings(Settings):
-    fetch_delay = SettingAttribute('fetch_delay', default=timedelta(days=1), dtype=timedelta, parse=_parse_duration, unparse=_unparse_duration)
-    update_delay = SettingAttribute('update_delay', default=timedelta(days=1), dtype=timedelta, parse=_parse_duration, unparse=_unparse_duration)
+    fetch_delay = SettingAttribute(
+        "fetch_delay",
+        default=timedelta(days=1),
+        dtype=timedelta,
+        parse=_parse_duration,
+        unparse=_unparse_duration,
+    )
+    update_delay = SettingAttribute(
+        "update_delay",
+        default=timedelta(days=1),
+        dtype=timedelta,
+        parse=_parse_duration,
+        unparse=_unparse_duration,
+    )
 
-settings = _ProgramSettings(xdg.xdg_config_home() / APP_NAME / 'settings.toml')
+
+settings = _ProgramSettings(xdg.xdg_config_home() / APP_NAME / "settings.toml")
+
 
 def expand_path(path: Union[str, os.PathLike], project_name=None, **kwargs) -> Path:
     if project_name:
-        kwargs['PROJECT'] = project_name
-        kwargs['PROJECT_DIR'] = project_directory(project_name)
+        kwargs["PROJECT"] = project_name
+        kwargs["PROJECT_DIR"] = project_directory(project_name)
     with update_environ(kwargs):
         return Path(os.path.expandvars(os.path.expanduser(path)))
 
@@ -306,26 +342,36 @@ def update_environ(extra_env):
 
 @lru_cache()
 def edit_project_state(project_name: str) -> BaseSettings:
-    return JSONSettings(project_state_directory(project_name) / 'state.json')
+    return JSONSettings(project_state_directory(project_name) / "state.json")
+
 
 def get_progress(**kwargs):
     try:
-        from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
-        if console and not 'console' in kwargs:
-            kwargs['console'] = console
+        from rich.progress import (
+            Progress,
+            TextColumn,
+            BarColumn,
+            DownloadColumn,
+            TransferSpeedColumn,
+            TimeRemainingColumn,
+        )
+
+        if console and not "console" in kwargs:
+            kwargs["console"] = console
 
         return Progress(
-                TextColumn("[bold blue]{task.description}", justify="right"),
-                BarColumn(bar_width=None),
-                "[progress.percentage]{task.percentage:>3.1f}%",
-                "•",
-                DownloadColumn(),
-                "•",
-                TransferSpeedColumn(),
-                "•",
-                TimeRemainingColumn(),
-                **kwargs
+            TextColumn("[bold blue]{task.description}", justify="right"),
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>3.1f}%",
+            "•",
+            DownloadColumn(),
+            "•",
+            TransferSpeedColumn(),
+            "•",
+            TimeRemainingColumn(),
+            **kwargs,
         )
     except ImportError:
         from unittest.mock import Mock
+
         return MagicMock()

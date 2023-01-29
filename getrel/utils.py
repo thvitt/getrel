@@ -1,7 +1,16 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 from tarfile import is_tarfile
-from typing import TypeVar, Iterable, MutableMapping, Sequence, Callable, Optional, Union, Dict
+from typing import (
+    TypeVar,
+    Iterable,
+    MutableMapping,
+    Sequence,
+    Callable,
+    Optional,
+    Union,
+    Dict,
+)
 import stat
 from mimetypes import guess_type
 from typing import Optional
@@ -18,10 +27,12 @@ logger = logging.getLogger(__name__)
 try:
     from humanize import naturalsize
 except ImportError:
+
     def naturalsize(size: int, **kwargs):
         return str(size)
 
-T = TypeVar('T')
+
+T = TypeVar("T")
 _no_default = object()
 
 
@@ -41,7 +52,7 @@ def first(iterable: Iterable[T], *, default=_no_default, strict=False) -> T:
         result = next(iterator)
     except StopIteration:
         if strict or default is _no_default:
-            raise ValueError(f'{iterable} is empty')
+            raise ValueError(f"{iterable} is empty")
         else:
             return default  # type: ignore
     if strict:
@@ -49,7 +60,7 @@ def first(iterable: Iterable[T], *, default=_no_default, strict=False) -> T:
             second = next(iterator)
         except StopIteration:
             return result
-        raise ValueError(f'More than one value: {[result, second, ...]}')
+        raise ValueError(f"More than one value: {[result, second, ...]}")
     else:
         return result
 
@@ -84,42 +95,55 @@ class FileType:
             file = Path(file)
         self.file = file
         if file.is_dir():
-            self.mime = 'inode/directory'
-            self.description = 'Directory'
+            self.mime = "inode/directory"
+            self.description = "Directory"
             return
         elif magic is not None:
             self.mime = magic.from_file(file, mime=True)
-            self.description = magic.from_file(file) or 'unknown'
+            self.description = magic.from_file(file) or "unknown"
         else:
             self.mime = guess_type(file, strict=False)[0]
             self.description = self.mime or "unknown"
 
-        if file.is_file() and file.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        if file.is_file() and file.stat().st_mode & (
+            stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        ):
             self.executable = True
-        elif self.mime is not None and ('executable' in self.mime or 'script' in self.mime):
+        elif self.mime is not None and (
+            "executable" in self.mime or "script" in self.mime
+        ):
             self.executable = True
         elif is_tarfile(file) or is_zipfile(file):
             self.archive = True
         elif file.is_file():
-            with file.open(errors='ignore') as f:
-                if f.read(2) == '#!':
+            with file.open(errors="ignore") as f:
+                if f.read(2) == "#!":
                     self.executable = True
 
     def __str__(self):
         result = self.mime
         app = []
         if self.executable:
-            app.append('executable')
+            app.append("executable")
         if self.archive:
-            app.append('archive')
+            app.append("archive")
         if app:
             result += f" ({' '.join(app)})"
         return result
 
 
-def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Optional[Path] = None, json: Union[
-    bool, str] = False,
-                   return_response: bool = False, cache_headers: bool = False, headers=None, message=None, **kwargs):
+def fetch_if_newer(
+    url: str,
+    cache: MutableMapping,
+    *,
+    download_file: Optional[Path] = None,
+    json: Union[bool, str] = False,
+    return_response: bool = False,
+    cache_headers: bool = False,
+    headers=None,
+    message=None,
+    **kwargs,
+):
     """
     Retrieves the given URL unless it has not been modified.
 
@@ -150,20 +174,37 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Optional[P
         a response if return_response is true and True would have been returned.
     """
     last_requested_ago = None
-    if 'last-request' in cache:
-        last_requested_ago = datetime.now() - datetime.fromisoformat(cache['last-request'])
-        if last_requested_ago  <= settings.fetch_delay:  # type:ignore
-            logger.debug('Not fetching %s, last request was less then %s ago (%s)', url, last_requested_ago,
-                         settings.fetch_delay)
+    if "last-request" in cache:
+        last_requested_ago = datetime.now() - datetime.fromisoformat(
+            cache["last-request"]
+        )
+        if last_requested_ago <= settings.fetch_delay:  # type:ignore
+            logger.debug(
+                "Not fetching %s, last request was less then %s ago (%s)",
+                url,
+                last_requested_ago,
+                settings.fetch_delay,
+            )
             return False
     last_modified_ = None
-    if 'Last-Modified' in cache:
-        last_modified_ = datetime.now() - parse_http_date(cache['Last-Modified'])
+    if "Last-Modified" in cache:
+        last_modified_ = datetime.now() - parse_http_date(cache["Last-Modified"])
         if last_modified_ <= settings.update_delay:  # type:ignore
-            logger.debug('Not fetching %s, last modified less then %s ago (%s)', url, last_modified_, settings.update_delay)
+            logger.debug(
+                "Not fetching %s, last modified less then %s ago (%s)",
+                url,
+                last_modified_,
+                settings.update_delay,
+            )
             return False
-    logger.debug('%s last modified %s (> %s), last requested %s (> %s)', url, last_modified_, settings.update_delay,
-                 last_requested_ago, settings.fetch_delay)
+    logger.debug(
+        "%s last modified %s (> %s), last requested %s (> %s)",
+        url,
+        last_modified_,
+        settings.update_delay,
+        last_requested_ago,
+        settings.fetch_delay,
+    )
 
     with get_progress(transient=True) as progress:
         progress_msg = str(message or download_file or url)
@@ -172,52 +213,52 @@ def fetch_if_newer(url: str, cache: MutableMapping, *, download_file: Optional[P
         if headers is None:
             headers = {}
         if json:
-            headers['Accept'] = 'application/json'
+            headers["Accept"] = "application/json"
         if download_file is None or download_file.exists():
-            if 'ETag' in cache:
-                headers['If-None-Match'] = str(cache['ETag'])
-            if 'Last-Modified' in cache:
-                headers['If-Modified-Since'] = str(cache['Last-Modified'])
+            if "ETag" in cache:
+                headers["If-None-Match"] = str(cache["ETag"])
+            if "Last-Modified" in cache:
+                headers["If-Modified-Since"] = str(cache["Last-Modified"])
         response = requests.get(url, headers=headers, **kwargs)
-        cache['last-request'] = datetime.now().isoformat()
+        cache["last-request"] = datetime.now().isoformat()
         if response.status_code == requests.codes.not_modified:
-            logger.debug('%s: Not modified', url)
+            logger.debug("%s: Not modified", url)
             progress.stop_task(task_id)
             return False
         response.raise_for_status()
         # if we land here, a full (updated or new) response has been received.
-        if 'Content-Length' in response.headers:
-            progress.update(task_id, total=int(response.headers.get('Content-Length')))
+        if "Content-Length" in response.headers:
+            progress.update(task_id, total=int(response.headers.get("Content-Length")))
 
         if cache_headers:
-            cache['url'] = response.url
-        if 'ETag' in response.headers:
-            cache['ETag'] = response.headers['ETag']
-        if 'Last-Modified' in response.headers:
-            cache['Last-Modified'] = response.headers['Last-Modified']
+            cache["url"] = response.url
+        if "ETag" in response.headers:
+            cache["ETag"] = response.headers["ETag"]
+        if "Last-Modified" in response.headers:
+            cache["Last-Modified"] = response.headers["Last-Modified"]
         if cache_headers:
-            cache['headers'] = dict(response.headers)
+            cache["headers"] = dict(response.headers)
         if download_file:
-            logger.debug('%s: Downloading to %s', url, download_file)
+            logger.debug("%s: Downloading to %s", url, download_file)
             download_file.parent.mkdir(parents=True, exist_ok=True)
-            with download_file.open('wb') as f:
+            with download_file.open("wb") as f:
                 progress.start_task(task_id)
                 for chunk in response.iter_content(chunk_size=512 * 1024):
                     progress.advance(task_id, len(chunk))
                     f.write(chunk)
         elif json:
-            logger.debug('%s: Downloading JSON to cache', url)
-            cache['data'] = response.json()
+            logger.debug("%s: Downloading JSON to cache", url)
+            cache["data"] = response.json()
         else:
-            logger.debug('%s: Downloading data to cache', url)
+            logger.debug("%s: Downloading data to cache", url)
             try:
                 json = response.json()
-                cache['data'] = response.json()
+                cache["data"] = response.json()
             except requests.JSONDecodeError:
                 if response.encoding is not None:
-                    cache['data'] = response.text
+                    cache["data"] = response.text
                 else:
-                    cache['data'] = response.content
+                    cache["data"] = response.content
         if return_response:
             return response
         else:
@@ -236,11 +277,13 @@ def unique_substrings(strings: Iterable[str]) -> Dict[str, str]:
 
     Note that 'ab' is not in the results since it is completely contained within 'abab'
     """
-    candidates = {}  # Map substring -> None if not unique  | string for identified string
+    candidates = (
+        {}
+    )  # Map substring -> None if not unique  | string for identified string
     for string in strings:
         for length in range(1, len(string)):
             for start in range(0, len(string) - length + 1):
-                substr = string[start:start + length]
+                substr = string[start : start + length]
                 candidates[substr] = None if substr in candidates else string
 
     unique = {}  # Map string -> shortest identifying substring
@@ -251,7 +294,9 @@ def unique_substrings(strings: Iterable[str]) -> Dict[str, str]:
     return unique
 
 
-def shorten_list(source: Sequence[T], predicate: Callable[[T], bool], min_items: int = 1) -> Sequence[T]:
+def shorten_list(
+    source: Sequence[T], predicate: Callable[[T], bool], min_items: int = 1
+) -> Sequence[T]:
     result = [item for item in source if predicate(item)]
     if len(result) < min_items:
         return source

@@ -21,7 +21,7 @@ def test_first_default():
 
 def test_filetype():
     ft = FileType(__file__)
-    assert ft.mime == 'text/x-script.python'
+    assert ft.mime == "text/x-script.python"
     assert "Python" in ft.description
     assert ft.executable
     assert not ft.archive
@@ -29,12 +29,12 @@ def test_filetype():
 
 
 def test_fetch_if_newer():
-    cache = {'ETag': 'test'}
+    cache = {"ETag": "test"}
     not_modified = MagicMock()
     not_modified.status_code = requests.codes.not_modified
-    with patch('requests.get', MagicMock(return_value=not_modified)) as get:
-        url = 'https://github.com/foo'
+    with patch("requests.get", MagicMock(return_value=not_modified)) as get:
+        url = "https://github.com/foo"
         result = fetch_if_newer(url, cache)
         assert result == False
-        assert 'last-request' in cache
-        get.assert_called_once_with(url, headers={'If-None-Match': cache['ETag']})
+        assert "last-request" in cache
+        get.assert_called_once_with(url, headers={"If-None-Match": cache["ETag"]})
