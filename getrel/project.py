@@ -363,7 +363,7 @@ class Installable:
                         candidate.unlink()
                     self.project.unregister_installed_file(candidate)
                     deleted_candidates.append(candidate)
-                except IOError as e:
+                except OSError as e:
                     logger.warning("Cannot delete %s: %s", candidate, e)
             logger.info(
                 "Deleted %d files: %s",
@@ -634,7 +634,7 @@ class GitHubProject(Installable):
                             self,
                         )
                     self.unregister_installed_file(project_file.path)
-                except IOError as e:
+                except OSError as e:
                     logger.error(
                         "Unable to delete %s (%s) while uninstalling %s",
                         project_file,
@@ -647,7 +647,7 @@ class GitHubProject(Installable):
                 if parent.exists() and parent != self.directory:
                     parent.rmdir()
                     count += 1
-            except IOError as e:
+            except OSError as e:
                 logger.info("Keeping non-empty directory %s", parent)
         # persist changed state
         self.state["installed"] = None

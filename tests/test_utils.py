@@ -15,7 +15,7 @@ def test_first():
 
 def test_first_default():
     assert first([], default=1) == 1
-    with pytest.raises((ValueError)):
+    with pytest.raises(ValueError):
         first([])
 
 

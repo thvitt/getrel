@@ -400,7 +400,7 @@ def install(
                     uninstalled += 1
                 project.install(force=reinstall)
                 installed += 1
-        except IOError as e:
+        except OSError as e:
             logger.exception("Failed to install %s: %s", name, e)
     logger.info(
         "%d projects updated, %d uninstalled and %d installed.",

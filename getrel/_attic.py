@@ -66,12 +66,12 @@ def download_releases(project: str):
     ).ask()
 
     if not release:
-        raise IOError(f"Project {project}: No release selected.")
+        raise OSError(f"Project {project}: No release selected.")
     if release == "latest" and latest:
         use_latest = True
         release = latest
     if not "assets" in release or not release["assets"]:
-        raise IOError(
+        raise OSError(
             f'Project {project}, release {release["tag"]} does not have any downloadable assets'
         )
     if len(release["assets"]) > 1:
