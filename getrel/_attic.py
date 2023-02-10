@@ -21,6 +21,7 @@ import re
 session = Session()
 console = Console()
 
+
 # TODO refactor
 def download_releases(project: str):
     m = re.match(r"https://(?:[^/]+\.)?github.com/(\w+/\w+)", project)

@@ -238,7 +238,6 @@ T = TypeVar("T")
 
 
 class SettingAttribute:
-
     _no_default = object()
 
     def __init__(

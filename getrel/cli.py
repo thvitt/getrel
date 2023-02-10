@@ -235,7 +235,6 @@ def add(
         logger.debug("Project config: %s", project.config)
         logger.debug("Global settings:\n%s", settings)
         with project.use_directory():
-
             # now select the asset(s)
             asset_choices = [
                 asset2choice(a)
