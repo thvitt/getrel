@@ -1,36 +1,42 @@
-[tool.poetry]
+[project]
+authors = [
+    {name = "Thorsten Vitt", email = "thorsten.vitt@uni-wuerzburg.de"},
+]
+requires-python = ">=3.8,<3.12"
+dependencies = [
+    "requests<3.0.0,>=2.27.1",
+    "tomlkit<1.0.0,>=0.10.2",
+    "xdg<6.0.0,>=5.1.1",
+    "typer<1.0.0,>=0.6.1",
+    "durations<1.0.0,>=0.3.3",
+    "python-dateutil<3.0.0,>=2.8.2",
+    "pathlib2<3.0.0.0,>=2.3.7.post1; python_version < \"3.9\"",
+]
 name = "getrel"
 version = "0.1.1"
 description = "Downloader for github releases"
-authors = ["Thorsten Vitt <thorsten.vitt@uni-wuerzburg.de>"]
 
-[tool.poetry.scripts]
+[project.optional-dependencies]
+tui = [
+    "rich<13.0.0,>=12.4.1",
+    "questionary<2.0.0,>=1.10.0",
+    "humanize<5.0.0,>=4.2.3",
+    "python-magic<1.0.0,>=0.4.27",
+]
+
+[project.scripts]
 getrel = "getrel:_main"
 
-[tool.poetry.dependencies]
-python = ">=3.8,<3.12"
-requests = "^2.27.1"
-tomlkit = "^0.10.2"
-xdg = "^5.1.1"
-rich = {version = "^12.4.1", optional = true}
-questionary = {version = "^1.10.0", optional = true}
-typer = "^0.6.1"
-humanize = {version = "^4.2.3", optional = true}
-python-magic = {version = "^0.4.27", optional = true}
-durations = "^0.3.3"
-python-dateutil = "^2.8.2"
-pathlib2 = {version = "^2.3.7.post1", allow-prereleases = true, python = "<3.9"}
+[tool.pdm]
+[tool.pdm.dev-dependencies]
+dev = [
+    "pre-commit<4.0.0,>=3.0.1",
+    "pytest>=7.4.3",
+    "pyinstaller>=6.1.0",
+]
 
-[tool.poetry.extras]
-tui = ["rich", "questionary", "typer", "humanize", "python-magic"]
-
-[tool.poetry.dev-dependencies]
-pytest = "^7.1.2"
-pyinstaller = "^5.3"
-
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^3.0.1"
-
+[tool.pdm.build]
+includes = []
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
