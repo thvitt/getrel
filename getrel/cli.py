@@ -699,6 +699,7 @@ def ls(
         x: eXecutable
         d: a directory
         ?: an unregistered file found in the project directory
+        M: a registered file missing from the file system
     """
     if not projects:
         projects = list(edit_projects())
@@ -757,10 +758,10 @@ def ls(
                 except FileNotFoundError as e:
                     link_flag = Text("!", "bold red")
                     logger.debug(e)
-                    stat = file.path.stat(follow_symlinks=False)
+                    stat = None
                 result += Text("A", "cyan") if file.asset else na
                 result += Text("X", "magenta") if file.external else na
-                result += Text("x", "yellow") if stat.st_mode & 0o111 else na
+                result += Text("x", "yellow") if stat and stat.st_mode & 0o111 else na
                 result += Text("d", "green") if file.path.is_dir() else na
                 result += link_flag
                 result += Text("?", "blue") if file.unregistered else na
@@ -775,13 +776,21 @@ def ls(
                 lines = [pathtext(s) for s in selected]
 
             for file, tree_line in zip(selected, lines):
-                stat = file.path.lstat()
-                cells = [
-                    tree_line,
-                    attr(file),
-                    styled_nsize(stat.st_size),
-                    styled_ntime(datetime.fromtimestamp(stat.st_mtime)),
-                ]
+                try:
+                    stat = file.path.lstat()
+                    cells = [
+                        tree_line,
+                        attr(file),
+                        styled_nsize(stat.st_size),
+                        styled_ntime(datetime.fromtimestamp(stat.st_mtime)),
+                    ]
+                except FileNotFoundError:
+                    cells = [
+                        tree_line,
+                        attr(file),
+                        Text("---", style="red"),
+                        Text("---", style="red"),
+                    ]
                 if show_details:
                     cells.append(
                         Text(str(file.install_spec), style="green")

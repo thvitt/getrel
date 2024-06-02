@@ -4,7 +4,12 @@ from collections.abc import Mapping, MutableMapping
 from datetime import timedelta
 from difflib import unified_diff
 from operator import getitem
-from pathlib import Path
+
+try:
+    from pathlib2 import Path
+except ImportError:
+    from pathlib import Path
+
 from typing import Optional, TypeVar, Union
 from contextlib import contextmanager
 from functools import lru_cache

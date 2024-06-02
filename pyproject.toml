@@ -8,7 +8,7 @@ dependencies = [
   "typer<1.0.0,>=0.6.1",
   "durations<1.0.0,>=0.3.3",
   "python-dateutil<3.0.0,>=2.8.2",
-  "pathlib2<3.0.0.0,>=2.3.7.post1; python_version < \"3.9\"",
+  "pathlib2<3.0.0.0,>=2.3.7.post1; python_version < \"3.10\"",
 ]
 name = "getrel"
 version = "0.1.1"
