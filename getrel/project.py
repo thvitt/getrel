@@ -19,7 +19,13 @@ from dateutil.parser import isoparse
 
 from .config import BaseSettings
 from . import config
-from .utils import naturalsize, first, fetch_if_newer
+from .utils import (
+    naturalsize,
+    first,
+    fetch_if_newer,
+    unpack_single_file,
+    DecompressionError,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -309,11 +315,14 @@ class Installable:
                 )
                 member_names = z.namelist()  ## FIXME
         else:
-            logger.error(
-                "%s: %s could not be identified as an archive, not unpacked.",
-                self,
-                self.source,
-            )
+            try:
+                member_names.append(unpack_single_file(self.source))
+            except DecompressionError:
+                logger.error(
+                    "%s: %s could not be identified as an archive or packed file, not unpacked.",
+                    self,
+                    self.source,
+                )
 
         project_directory = self.project.directory.resolve()  # type:ignore
         extracted_files = [

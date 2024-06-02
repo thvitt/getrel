@@ -1,8 +1,8 @@
 def _main():
     try:
-        from .cli import app
+        from .cli import main
 
-        app()
+        main()
     except ImportError as e:
         from .simplecli import main
 

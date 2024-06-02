@@ -1,16 +1,14 @@
 [project]
-authors = [
-    {name = "Thorsten Vitt", email = "thorsten.vitt@uni-wuerzburg.de"},
-]
+authors = [{ name = "Thorsten Vitt", email = "thorsten.vitt@uni-wuerzburg.de" }]
 requires-python = ">=3.8,<3.12"
 dependencies = [
-    "requests<3.0.0,>=2.27.1",
-    "tomlkit<1.0.0,>=0.10.2",
-    "xdg<6.0.0,>=5.1.1",
-    "typer<1.0.0,>=0.6.1",
-    "durations<1.0.0,>=0.3.3",
-    "python-dateutil<3.0.0,>=2.8.2",
-    "pathlib2<3.0.0.0,>=2.3.7.post1; python_version < \"3.9\"",
+  "requests<3.0.0,>=2.27.1",
+  "tomlkit<1.0.0,>=0.10.2",
+  "xdg<6.0.0,>=5.1.1",
+  "typer<1.0.0,>=0.6.1",
+  "durations<1.0.0,>=0.3.3",
+  "python-dateutil<3.0.0,>=2.8.2",
+  "pathlib2<3.0.0.0,>=2.3.7.post1; python_version < \"3.9\"",
 ]
 name = "getrel"
 version = "0.1.1"
@@ -18,14 +16,21 @@ description = "Downloader for github releases"
 
 [project.optional-dependencies]
 tui = [
-    "rich<13.0.0,>=12.4.1",
-    "questionary<2.0.0,>=1.10.0",
-    "humanize<5.0.0,>=4.2.3",
-    "python-magic<1.0.0,>=0.4.27",
+  "rich<13.0.0,>=12.4.1",
+  "questionary<2.0.0,>=1.10.0",
+  "humanize<5.0.0,>=4.2.3",
+  "python-magic<1.0.0,>=0.4.27",
 ]
 
 [project.scripts]
 getrel = "getrel:_main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.mypy]
+implicit_optional = true
 
 [tool.pdm]
 [tool.pdm.dev-dependencies]
@@ -33,10 +38,11 @@ dev = [
     "pre-commit<4.0.0,>=3.0.1",
     "pytest>=7.4.3",
     "pyinstaller>=6.1.0",
+    "mypy>=1.8.0",
+    "types-Pygments>=2.17.0.20240106",
+    "types-python-dateutil>=2.8.19.20240106",
+    "types-requests>=2.31.0.20240125",
 ]
 
 [tool.pdm.build]
 includes = []
-[build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"

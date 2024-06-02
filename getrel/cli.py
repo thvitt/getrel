@@ -49,7 +49,17 @@ logging.basicConfig(
     level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[log_handler]
 )
 logger = logging.getLogger(__name__)
+
+
 app = typer.Typer(pretty_exceptions_enable=False)
+
+
+def main():
+    try:
+        app()
+    except Exception as e:
+        logger.critical(str(e))
+        logger.debug(str(e), exc_info=True)
 
 
 @app.callback(invoke_without_command=True)
@@ -270,9 +280,9 @@ def add(
             selected_assets = questionary.checkbox(
                 "Which asset(s) should be downloaded?",
                 asset_choices,
-                validate=lambda selection: True
-                if selection
-                else "select at least one asset",
+                validate=lambda selection: (
+                    True if selection else "select at least one asset"
+                ),
             ).ask()
             for asset in project.get_assets():
                 asset.unconfigure()
@@ -776,22 +786,26 @@ def ls(
                     cells.append(
                         Text(str(file.install_spec), style="green")
                         if file.install_spec
-                        else Text(
-                            "⏵"
-                            + current_project.project_relative_fspath(
-                                file.path.readlink()
-                            ),
-                            style="cyan",
+                        else (
+                            Text(
+                                "⏵"
+                                + current_project.project_relative_fspath(
+                                    file.path.readlink()
+                                ),
+                                style="cyan",
+                            )
+                            if file.path.is_symlink()
+                            else ""
                         )
-                        if file.path.is_symlink()
-                        else ""
                     )
                 if not single_project:
                     cells.insert(
                         0,
-                        ""
-                        if shown_project_name
-                        else Text(str(current_project), "bright_cyan on black"),
+                        (
+                            ""
+                            if shown_project_name
+                            else Text(str(current_project), "bright_cyan on black")
+                        ),
                     )
                     shown_project_name = True
                 table.add_row(*cells, end_section=file == selected[-1])

@@ -16,6 +16,8 @@ from mimetypes import guess_type
 from typing import Optional
 from zipfile import is_zipfile
 import email.utils as eut
+from importlib import import_module
+from shutil import copyfileobj, copystat
 
 import requests
 import logging
@@ -306,3 +308,58 @@ def shorten_list(
 
 def parse_http_date(http_date: str) -> datetime:
     return datetime(*eut.parsedate(http_date)[:6])  # type:ignore
+
+
+_unpack_modules = {
+    ".gz": "gzip",
+    ".bz2": "bzip2",
+    ".xz": "lzma",
+    ".lzma": "lzma",
+    ".zstd": "pyzstd",
+}
+
+
+def _do_unpack(source: Path, dest: Path, module_name: str):
+    module = import_module(module_name)
+    with module.open(source, "rb") as input, dest.open("wb") as output:
+        copyfileobj(input, output)
+    copystat(source, dest)
+
+
+class DecompressionError(OSError):
+    ...
+
+
+def unpack_single_file(
+    source: Path, dest: Path | None = None, try_around: bool = True
+) -> Path:
+    """
+    Tries to unpack the compressed file source to the destination dest.
+
+
+    """
+    if dest is None:
+        dest = source.with_suffix("")
+    elif dest.is_dir():
+        dest = dest / source.with_suffix("")
+    if source.suffix in _unpack_modules:
+        try:
+            _do_unpack(source, dest, _unpack_modules[source.suffix])
+            return dest
+        except Exception as e:
+            logger.error(
+                "Failed to unpack %s to %s using matching module %s: %s",
+                source,
+                dest,
+                _unpack_modules[source.suffix],
+                e,
+            )
+    if try_around:
+        for module in set(_unpack_modules.values()):
+            try:
+                _do_unpack(source, dest, module)
+                logger.info("Unpacked %s to %s using %s", source, dest, module)
+                return dest
+            except Exception as e:
+                logger.warning("Failed to unpack %s using %s: %s", source, module, e)
+    raise DecompressionError(f"No unpacker succeeded in unpacking {source} to {dest}")
