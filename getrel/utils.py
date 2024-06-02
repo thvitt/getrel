@@ -331,7 +331,7 @@ class DecompressionError(OSError):
 
 
 def unpack_single_file(
-    source: Path, dest: Path | None = None, try_around: bool = True
+    source: Path, dest: Optional[Path] = None, try_around: bool = True
 ) -> Path:
     """
     Tries to unpack the compressed file source to the destination dest.

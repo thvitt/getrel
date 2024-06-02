@@ -599,20 +599,22 @@ class GitHubProject(Installable):
 
     def get_installed(self, include_unknown=False) -> List[ProjectFile]:
         installed_files = self.installed_files
-        project_dir_files = set(
-            map(
-                self.project_relative_fspath,
-                (
-                    p
-                    for p in self.directory.rglob("*")
-                    if not (
-                        p.is_dir()
-                        or p.is_relative_to(config.project_state_directory(self.name))
-                    )
-                ),
+        project_dir_files = {
+            self.project_relative_fspath(p)
+            for p in self.directory.rglob("*")
+            if not (
+                p.is_dir()
+                or p.is_relative_to(config.project_state_directory(self.name))
             )
-        )
+        }
         unknown_files = project_dir_files - set(installed_files)
+        logger.debug(
+            "file report for %s:\n- installed: %s\n- project dir: %s\n- unknown: %s",
+            self.name,
+            installed_files,
+            project_dir_files,
+            unknown_files,
+        )
         return [ProjectFile(self, f) for f in self.installed_files] + [
             ProjectFile(self, f, unregistered=True) for f in unknown_files
         ]

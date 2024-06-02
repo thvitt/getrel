@@ -1007,6 +1007,7 @@ def clean(
         for name, project_config in list(projects.items()):
             project_count += 1
             valid = True
+            project = None
             try:
                 project = get_project(name)
             except Exception as e:
@@ -1017,8 +1018,11 @@ def clean(
                 valid = False
 
             if not valid:
-                console.print(Syntax(tomlkit.dumps({name: project.config}), "toml"))
-                if not yes:
+                if project is not None:
+                    console.print(Syntax(tomlkit.dumps({name: project.config}), "toml"))
+                if yes:
+                    answer = yes
+                else:
                     answer = questionary.select(
                         "Delete the project config (above)?",
                         [
@@ -1034,7 +1038,7 @@ def clean(
                         ],
                         use_shortcuts=True,
                     ).ask()
-                if yes or answer == "yes":
+                if answer == "yes":
                     del projects[name]
                     logger.warning("Removed invalid config for %s", name)
                 elif answer == "configure":
@@ -1044,6 +1048,7 @@ def clean(
                     else:
                         add(name)
             else:
+                assert project is not None
                 valid_projects += 1
                 unknown_files = [
                     f
@@ -1052,11 +1057,12 @@ def clean(
                 ]
                 if unknown_files:
                     if logger.isEnabledFor(logging.INFO) or not yes:
-                        ls([project.name], ignore_boring=False, show_details=False)
+                        # ls([project.name], ignore_boring=False, show_details=False)
+                        console.print(*unknown_files)
                     if (
                         yes
                         or questionary.confirm(
-                            f"{project}’s directory contains unregistered files (marked ? above). Remove them?"
+                            f"{project}’s directory contains unregistered files (listed above). Remove them?"
                         ).ask()
                     ):
                         for file in unknown_files:
