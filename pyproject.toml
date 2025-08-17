@@ -1,6 +1,6 @@
 [project]
 authors = [{ name = "Thorsten Vitt", email = "thorsten.vitt@uni-wuerzburg.de" }]
-requires-python = ">=3.8,<4.0"
+requires-python = ">=3.9,<4.0"
 dependencies = [
   "requests<3.0.0,>=2.27.1",
   "tomlkit<1.0.0,>=0.10.2",
@@ -32,16 +32,13 @@ build-backend = "pdm.backend"
 [tool.mypy]
 implicit_optional = true
 
-[tool.rye]
-dev-dependencies = [
-  "pre-commit<4.0.0,>=3.0.1",
-  "pytest>=7.4.3",
-  "pyinstaller>=6.1.0",
-  "mypy>=1.8.0",
-  "types-Pygments>=2.17.0.20240106",
-  "types-python-dateutil>=2.8.19.20240106",
-  "types-requests>=2.31.0.20240125",
+[dependency-groups]
+dev = [
+  "mypy>=1.17.1",
+  "pre-commit>=4.3.0",
+  "pyinstaller>=6.15.0",
+  "pytest>=8.4.1",
+  "types-pygments>=2.19.0.20250809",
+  "types-python-dateutil>=2.9.0.20250809",
+  "types-requests>=2.32.4.20250809",
 ]
-
-[tool.pdm.build]
-includes = []
