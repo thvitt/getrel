@@ -1153,7 +1153,7 @@ class GithubAsset(Installable):
                 cache[self.asset_desc["url"]] = {}
 
             updated = fetch_if_newer(
-                self.asset_desc["url"],
+                self.asset_desc["browser_download_url"],
                 cache[self.asset_desc["url"]],
                 download_file=self.source,
                 message=str(self),
