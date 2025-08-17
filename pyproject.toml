@@ -7,7 +7,11 @@ authors = [
     { name = "Thorsten Vitt", email = "thorsten.vitt@uni-wuerzburg.de" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "more-itertools>=10.7.0",
+    "pydantic>=2.11.7",
+    "python-magic>=0.4.27",
+]
 
 [project.scripts]
 getrel = "getrel:main"
@@ -15,3 +19,12 @@ getrel = "getrel:main"
 [build-system]
 requires = ["uv_build>=0.8.8,<0.9.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "ruff>=0.12.9",
+]
+
+[tool.ruff.lint]
+select = ["A", "C4", "EXE", "FA", "ICN", "LOG", "PYI", "SIM", "PTH", "NPY", "PD", "N", "UP", "FURB", "RUF"]
