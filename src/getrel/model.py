@@ -1,14 +1,13 @@
 import logging
 import tarfile
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from fnmatch import fnmatch
 from os import chdir, fspath
 from pathlib import Path
 from typing import Literal, overload
 from zipfile import BadZipFile, ZipFile
 
-from _pytest._code import source
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,18 @@ class WorkingDirectory:
 
 
 class Action(BaseModel, metaclass=ABCMeta):
+    """
+    Run some action (specified by the value of the _action_ field) on the source.
+
+    Concrete actions must implement the __call__ method. The actions are run directly
+    inside the project directory, so relative paths etc. will be relative to the project directory.
+    """
+
     source: str
+    """
+    Shell glob pattern (or fixed string) specifying the sources the action will work on.
+    Usually this will be relative to the project directory.
+    """
 
     @abstractmethod
     def __call__(self, project_files: list[Path]) -> None:
@@ -80,19 +90,56 @@ class Action(BaseModel, metaclass=ABCMeta):
 
 
 class UnpackAction(Action):
+    """
+    Unpacks the archive(s) at source to the destination or current (project) directory.
+
+    The action supports zip and tar files, and transparently handles tar compression.
+
+    See also:
+        zipfile, tarfile
+    """
+
     action: Literal["unpack"] = "unpack"
+
     destination: Path | None = None
+    """The path to which to unpack. If missing or None, unpack in the current (project) directory."""
+
     delete_source: bool = False
+    """If true, delete the archive after successful extraction."""
+
+    def _make_record_tar_filter(
+        self, recorder: list[Path]
+    ) -> Callable[[tarfile.TarInfo, str], tarfile.TarInfo | None]:
+        def _filter(member: tarfile.TarInfo, path: str, /) -> tarfile.TarInfo | None:
+            info = tarfile.data_filter(member, path)
+            if info is not None:
+                recorder.append((Path(path) / info.name).absolute())
+            return info
+
+        return _filter
 
     def __call__(self, project_files: list[Path]) -> None:
         for source in self.expand_source():
             try:
                 with ZipFile(source) as archive:
-                    archive.extractall(self.destination)  # TODO Safety check
+                    members = [
+                        name
+                        for name in archive.namelist()
+                        if name is not None
+                        and not (name.startswith("/") or name.startswith("../"))
+                    ]
+                    archive.extractall(self.destination, members)
+                    dest = self.destination or Path.cwd()
+                    project_files.extend(
+                        dest.joinpath(member).absolute() for member in members
+                    )
             except BadZipFile as zip_error:
                 try:
                     with tarfile.open(source) as archive:
-                        archive.extractall(fspath(self.destination or "."))
+                        archive.extractall(
+                            fspath(self.destination or "."),
+                            filter=self._make_record_tar_filter(project_files),
+                        )
                 except tarfile.ReadError as tar_error:
                     logger.error(
                         "Failed to unpack %s: %s and %s", source, zip_error, tar_error
