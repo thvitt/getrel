@@ -62,4 +62,4 @@ def test_unpack(resources: Path, tmp_path: Path, archive: str):
         action(files)
     expected = tmp_path / "data" / "data.txt"
     assert expected.exists()
-    # assert expected in files
+    assert expected in files
