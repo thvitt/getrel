@@ -3,14 +3,26 @@ import tarfile
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable, Iterable
 from fnmatch import fnmatch
+from nt import link
+from ntpath import relpath
 from os import chdir, fspath
+from os.path import expanduser, expandvars
 from pathlib import Path
 from typing import Literal, overload
 from zipfile import BadZipFile, ZipFile
 
+from _pytest._code import source
+from _typeshed import StrPath
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigError(ValueError): ...
+
+
+def expand(src: StrPath):
+    return Path(expandvars(src)).expanduser()
 
 
 class WorkingDirectory:
@@ -80,13 +92,17 @@ class Action(BaseModel, metaclass=ABCMeta):
                 candidates: Optional list of paths or strings to filter against the pattern.
         """  # noqa: RUF002
         if candidates is None:
-            path = Path(self.source)
+            path = expand(self.source)
             if path.is_absolute():
                 return path.parent.glob(path.name)
             else:
                 return Path().glob(self.source)
         else:
             return [path for path in candidates if fnmatch(str(path), self.source)]
+
+    @property
+    def sources(self) -> list[Path]:
+        return list(self.expand_source())
 
 
 class UnpackAction(Action):
@@ -119,7 +135,7 @@ class UnpackAction(Action):
         return _filter
 
     def __call__(self, project_files: list[Path]) -> None:
-        for source in self.expand_source():
+        for source in self.sources:
             try:
                 with ZipFile(source) as archive:
                     members = [
@@ -129,7 +145,7 @@ class UnpackAction(Action):
                         and not (name.startswith("/") or name.startswith("../"))
                     ]
                     archive.extractall(self.destination, members)
-                    dest = self.destination or Path.cwd()
+                    dest = expand(self.destination or Path.cwd())
                     project_files.extend(
                         dest.joinpath(member).absolute() for member in members
                     )
@@ -146,28 +162,103 @@ class UnpackAction(Action):
                     )
 
 
-class LinkAction(Action):
-    action: Literal["link"] = "link"
-    link: str
+class AbstractLinkAction(Action):
+    link: str | None
     dir: bool = False
     absolute: bool = False
 
-    def __call__(self, project_files: list[Path]) -> None:
-        sources = list(self.expand_source())
-        link = Path(self.link)
+    def _prepare_linkdir(self, project_files: list[Path]) -> Path:
+        if self.link is None:
+            raise ConfigError(
+                "link is missing for link action with source pattern %s: Do not know where to link to.",
+                self.source,
+            )
+        link = expand(self.link)
         if self.link.endswith("/") or link.is_dir() or self.dir:
             link_dir = link
         else:
             link_dir = link.parent
-            # TODO: check number of arguments
+            if len(self.sources) > 1:
+                raise ConfigError(
+                    "source %s expands to multiple files (%s), but link %s is not a directory",
+                    self.source,
+                    self.sources,
+                    self.link,
+                )
 
         if not link_dir.exists():
             link_dir.mkdir(parents=True)
             project_files.append(link_dir)
 
-        for source in sources:
+        return link_dir
+
+    def _create_link(self, source: Path, target: Path, project_files: list[Path]):
+        """
+        Creates a single link to source.
+
+        Args:
+            source: The file the link will point to
+            target: Either an existing directory in which source will be linked with the same name,
+                    or the direct path to the file to create
+        """
+        if target.is_dir():
+            link_dir = target
             link_path = link_dir / source.name
-            # TODO check existence
-            # TODO relativize / absolute
-            link_path.symlink_to(source)
-            project_files.append(link_path)
+        else:
+            link_dir = target.parent
+            link_path = target
+        if self.absolute:
+            final_path = source.absolute()
+        else:
+            final_path = relpath(source, link_path.parent)
+        if link_path.exists():
+            if link_path.is_symlink():
+                if link_path.readlink().samefile(final_path):
+                    logger.info(
+                        "Recreating symbolic link %s to %s", link_path, final_path
+                    )
+                else:
+                    logger.warning(
+                        "Creating symbolic link %s to %s, overwriting existing link to %s",
+                        link_path,
+                        final_path,
+                        link_path.readlink(),
+                    )
+            else:  # no symlink
+                logger.warning(
+                    "Overwriting regular file %s with a symbolic link to %s",
+                    link_path,
+                    final_path,
+                )
+        else:
+            logger.debug("Creating symbolic link %s to %s", link_path, final_path)
+        link_path.symlink_to(final_path)
+        project_files.append(link_path)
+
+
+class LinkAction(AbstractLinkAction):
+    action: Literal["link"] = "link"
+
+    def __call__(self, project_files: list[Path]) -> None:
+        link_dir = self._prepare_linkdir(project_files)
+        for source in self.sources:
+            self._create_link(source, link_dir, project_files)
+
+
+class BinAction(AbstractLinkAction):
+    action: Literal["bin"] = "bin"
+    link: str | None
+    bin: str | None = None
+
+    def __call__(self, project_files: list[Path]) -> None:
+        if self.link is None:
+            self.link = "~/.local/bin/"
+        link_dir = self._prepare_linkdir(project_files)
+        bin_ = None if self.bin is None else expand(self.bin)
+        for source in self.sources:
+            if bin_ is None:
+                self._create_link(source, link_dir, project_files)
+            elif bin_.is_absolute():
+                self._create_link(source, bin_, project_files)
+            else:
+                self._create_link(source, link_dir / bin_, project_files)
