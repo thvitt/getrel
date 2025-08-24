@@ -1,19 +1,22 @@
 import logging
+import shlex
+import shutil
+import subprocess
 import tarfile
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable, Iterable
 from fnmatch import fnmatch
-from nt import link
 from ntpath import relpath
 from os import chdir, fspath
-from os.path import expanduser, expandvars
+from os.path import expandvars
 from pathlib import Path
-from typing import Literal, overload
+from sys import argv
+from tempfile import NamedTemporaryFile
+from typing import Annotated, Literal, Union, overload
 from zipfile import BadZipFile, ZipFile
 
-from _pytest._code import source
-from _typeshed import StrPath
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic_core import Url
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,7 @@ logger = logging.getLogger(__name__)
 class ConfigError(ValueError): ...
 
 
-def expand(src: StrPath):
+def expand(src: str | Path) -> Path:
     return Path(expandvars(src)).expanduser()
 
 
@@ -163,7 +166,7 @@ class UnpackAction(Action):
 
 
 class AbstractLinkAction(Action):
-    link: str | None
+    link: str | None = None
     dir: bool = False
     absolute: bool = False
 
@@ -247,7 +250,6 @@ class LinkAction(AbstractLinkAction):
 
 class BinAction(AbstractLinkAction):
     action: Literal["bin"] = "bin"
-    link: str | None
     bin: str | None = None
 
     def __call__(self, project_files: list[Path]) -> None:
@@ -262,3 +264,80 @@ class BinAction(AbstractLinkAction):
                 self._create_link(source, bin_, project_files)
             else:
                 self._create_link(source, link_dir / bin_, project_files)
+
+
+class ScriptAction(Action):
+    action: Literal["install-script", "uninstall-script", "post-uninstall-script"]
+    cmd: str | None
+    script: str | None  # FIXME mutually exclusive -> @model_validator
+    creates: list[str] | None = None
+
+    # FIXME: use logproc
+
+    def __call__(self, project_files: list[Path]) -> None:
+        if self.cmd:
+            self._run_cmd(self.cmd, project_files, shell=False)
+        elif self.script is not None and self.script.strip().startswith("#!"):
+            self._run_script(self.script, project_files)
+        else:
+            assert self.script is not None  # guaranteed by validation
+            self._run_cmd(self.script, project_files, shell=True)
+
+    def _run_cmd(self, cmd: str, project_files: list[Path], shell: bool = False):
+        capture_stdout = self.creates is None
+        if shell:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE if capture_stdout else None,
+                text=True,
+                shell=True,
+            )
+        else:
+            args = shlex.split(cmd)
+            executable = shutil.which(args[0])
+            if executable is None:
+                raise ConfigError(
+                    'Executable %s not found for command "%s"', args[0], cmd
+                )
+            args[0] = executable
+            process = subprocess.Popen(
+                args, stdout=subprocess.PIPE if capture_stdout else None, text=True
+            )
+        stdout, _ = process.communicate()
+        project_files.extend(Path(line) for line in stdout.splitlines() if line)
+
+    def _run_script(self, script: str, project_files: list[Path]):
+        with NamedTemporaryFile(
+            "wt", prefix="getrel", delete_on_close=False
+        ) as script_file:
+            script_file.write(script.strip() + "\n")
+            script_file.close()
+            script_path = Path(script_file.name)
+            script_path.chmod(0o700)
+            self._run_cmd(shlex.quote(fspath(script_path)), project_files)
+
+
+Action_ = Annotated[
+    UnpackAction | BinAction | LinkAction | ScriptAction,
+    Field(discriminator="action"),
+]
+
+
+class Project(BaseModel):
+    url: Url
+    actions: list[Action_]
+
+
+if __name__ == "__main__":
+    import json
+
+    if len(argv) < 2:
+        with Path("getrel-project.schema.json").open("wt") as f:
+            json.dump(Project.model_json_schema(), f, indent=2)
+    elif len(argv) == 2:
+        import tomllib
+
+        with Path(argv[1]).open("rb") as f:
+            data = tomllib.load(f)
+            project = Project(**data)
+            print(project)
