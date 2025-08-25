@@ -1,22 +1,21 @@
 import logging
 import shlex
-import shutil
-import subprocess
 import tarfile
-from abc import ABC, ABCMeta, abstractmethod
+from abc import abstractmethod
 from collections.abc import Callable, Iterable
+from datetime import date
 from fnmatch import fnmatch
 from ntpath import relpath
-from os import chdir, fspath
-from os.path import expandvars
+from os import fspath
 from pathlib import Path
-from struct import Struct
 from sys import argv
 from tempfile import NamedTemporaryFile
-from typing import Annotated, Literal, Union, overload
+from typing import overload
 from zipfile import BadZipFile, ZipFile
 
 import msgspec
+
+from getrel.utils import expand
 
 logger = logging.getLogger(__name__)
 
@@ -24,32 +23,8 @@ logger = logging.getLogger(__name__)
 class ConfigError(ValueError): ...
 
 
-def expand(src: str | Path) -> Path:
-    return Path(expandvars(src)).expanduser()
-
-
 def _actiontag(classname: str):
     return classname.removesuffix("Action").lower()
-
-
-class WorkingDirectory:
-    directory: Path
-    previous: Path | None = None
-
-    def __init__(self, directory: Path, create: bool = True) -> None:
-        if create and not directory.exists():
-            directory.mkdir(parents=True)
-        self.directory = directory
-
-    def __enter__(self):
-        self.previous = Path.cwd()
-        chdir(self.directory)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        assert self.previous is not None
-        chdir(self.previous)
-        return False
 
 
 class Action(msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=True):
@@ -94,9 +69,6 @@ class Action(msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=T
 
         Args:
             candidates: Optional list of paths or strings to filter against the pattern.
-
-            Args:
-                candidates: Optional list of paths or strings to filter against the pattern.
         """  # noqa: RUF002
         if candidates is None:
             path = expand(self.source)
@@ -254,7 +226,7 @@ class LinkAction(AbstractLinkAction):
 
 class BinAction(AbstractLinkAction):
     """
-    Creates a symolic link for each of the binaries listed as source.
+    Creates a symbolic link for each of the binaries listed as source.
     """
 
     bin: str | None = None

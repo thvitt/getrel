@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 from more_itertools import first
 
-from getrel.model import Action, UnpackAction, WorkingDirectory
+from getrel.actions import Action, UnpackAction
+from getrel.utils import WorkingDirectory
 
 
 @pytest.fixture
