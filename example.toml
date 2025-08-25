@@ -1,0 +1,16 @@
+#:schema getrel-project.schema.json
+
+url = "https://github.com/thvitt/getrel"
+
+[[actions]]
+action = "unpack"
+source = "getrel-*.tar.gz"
+
+[[actions]]
+action = "bin"
+source = "*/bin/getrel"
+
+[[actions]]
+action = "script"
+source = ""
+cmd = "x"

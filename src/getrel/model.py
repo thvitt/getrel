@@ -3,20 +3,20 @@ import shlex
 import shutil
 import subprocess
 import tarfile
-from abc import ABCMeta, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable, Iterable
 from fnmatch import fnmatch
 from ntpath import relpath
 from os import chdir, fspath
 from os.path import expandvars
 from pathlib import Path
+from struct import Struct
 from sys import argv
 from tempfile import NamedTemporaryFile
 from typing import Annotated, Literal, Union, overload
 from zipfile import BadZipFile, ZipFile
 
-from pydantic import BaseModel, Field
-from pydantic_core import Url
+import msgspec
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,10 @@ class ConfigError(ValueError): ...
 
 def expand(src: str | Path) -> Path:
     return Path(expandvars(src)).expanduser()
+
+
+def _actiontag(classname: str):
+    return classname.removesuffix("Action").lower()
 
 
 class WorkingDirectory:
@@ -48,7 +52,7 @@ class WorkingDirectory:
         return False
 
 
-class Action(BaseModel, metaclass=ABCMeta):
+class Action(msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=True):
     """
     Run some action (specified by the value of the _action_ field) on the source.
 
@@ -118,9 +122,7 @@ class UnpackAction(Action):
         zipfile, tarfile
     """
 
-    action: Literal["unpack"] = "unpack"
-
-    destination: Path | None = None
+    destination: str | None = None
     """The path to which to unpack. If missing or None, unpack in the current (project) directory."""
 
     delete_source: bool = False
@@ -240,7 +242,9 @@ class AbstractLinkAction(Action):
 
 
 class LinkAction(AbstractLinkAction):
-    action: Literal["link"] = "link"
+    """
+    Creates a symbolic link to each of the files at the directory or filename given by the link property.
+    """
 
     def __call__(self, project_files: list[Path]) -> None:
         link_dir = self._prepare_linkdir(project_files)
@@ -249,7 +253,10 @@ class LinkAction(AbstractLinkAction):
 
 
 class BinAction(AbstractLinkAction):
-    action: Literal["bin"] = "bin"
+    """
+    Creates a symolic link for each of the binaries listed as source.
+    """
+
     bin: str | None = None
 
     def __call__(self, project_files: list[Path]) -> None:
@@ -267,10 +274,18 @@ class BinAction(AbstractLinkAction):
 
 
 class ScriptAction(Action):
-    action: Literal["install-script", "uninstall-script", "post-uninstall-script"]
-    cmd: str | None
-    script: str | None  # FIXME mutually exclusive -> @model_validator
+    """
+    Runs the given command or script.
+    """
+
+    cmd: str | None = None
+    """A single command with its arguments."""
+
+    script: str | None = None  # FIXME mutually exclusive
+    """Either a script starting with a #! line, or a shell command that is run with the current default shell."""
+
     creates: list[str] | None = None
+    """Optional list of files this action may create."""
 
     # FIXME: use logproc
 
@@ -317,27 +332,18 @@ class ScriptAction(Action):
             self._run_cmd(shlex.quote(fspath(script_path)), project_files)
 
 
-Action_ = Annotated[
-    UnpackAction | BinAction | LinkAction | ScriptAction,
-    Field(discriminator="action"),
-]
-
-
-class Project(BaseModel):
-    url: Url
-    actions: list[Action_]
+class Project(msgspec.Struct, omit_defaults=True):
+    url: str
+    actions: list[UnpackAction | BinAction | LinkAction | ScriptAction]
 
 
 if __name__ == "__main__":
-    import json
-
     if len(argv) < 2:
-        with Path("getrel-project.schema.json").open("wt") as f:
-            json.dump(Project.model_json_schema(), f, indent=2)
+        schema = msgspec.json.schema(Project)
+        Path("getrel-project.schema.json").write_bytes(msgspec.json.encode(schema))
     elif len(argv) == 2:
-        import tomllib
-
-        with Path(argv[1]).open("rb") as f:
-            data = tomllib.load(f)
-            project = Project(**data)
-            print(project)
+        struct = msgspec.toml.decode(
+            Path(argv[1]).read_text(encoding="utf-8"), type=Project
+        )
+        print(struct)
+        print(msgspec.json.encode(struct))
