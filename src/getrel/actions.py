@@ -310,10 +310,10 @@ class Project(msgspec.Struct, omit_defaults=True):
 
 
 if __name__ == "__main__":
-    if len(argv) < 2:
+    if len(argv) < 2:  # noqa: PLR2004
         schema = msgspec.json.schema(Project)
         Path("getrel-project.schema.json").write_bytes(msgspec.json.encode(schema))
-    elif len(argv) == 2:
+    elif len(argv) == 2:  # noqa: PLR2004
         struct = msgspec.toml.decode(
             Path(argv[1]).read_text(encoding="utf-8"), type=Project
         )

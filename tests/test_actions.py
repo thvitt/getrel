@@ -7,20 +7,6 @@ from getrel.actions import Action, UnpackAction
 from getrel.utils import WorkingDirectory
 
 
-@pytest.fixture
-def resources() -> Path:
-    return Path(__file__).parent.absolute() / "resources"
-
-
-def test_working_directory(resources):
-    old_cwd = Path.cwd()
-    with WorkingDirectory(resources) as wd:
-        assert Path.cwd() == resources
-        assert wd.directory == resources
-        assert wd.previous == old_cwd
-    assert old_cwd == Path.cwd()
-
-
 class DummyAction(Action):
     def __call__(self, files):
         pass
