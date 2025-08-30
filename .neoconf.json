@@ -1,0 +1,12 @@
+{
+  "lspconfig": {
+    "basedpyright": {
+      "basedpyright.analysis.autoFormatStrings": true
+    },
+    "harper-ls": {
+      "linters": {
+        "SpellCheck": false
+      }
+    }
+  }
+}

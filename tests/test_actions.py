@@ -3,11 +3,11 @@ from pathlib import Path
 import pytest
 from more_itertools import first
 
-from getrel.actions import Action, UnpackAction
+from getrel.actions import BaseAction, UnpackAction
 from getrel.utils import WorkingDirectory
 
 
-class DummyAction(Action):
+class DummyAction(BaseAction):
     def __call__(self, files):
         pass
 

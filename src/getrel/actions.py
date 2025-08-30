@@ -10,7 +10,7 @@ from os import fspath
 from pathlib import Path
 from sys import argv
 from tempfile import NamedTemporaryFile
-from typing import overload
+from typing import Literal, overload
 from zipfile import BadZipFile, ZipFile
 
 import msgspec
@@ -27,7 +27,9 @@ def _actiontag(classname: str):
     return classname.removesuffix("Action").lower()
 
 
-class Action(msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=True):
+class BaseAction(
+    msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=True, kw_only=True
+):
     """
     Run some action (specified by the value of the _action_ field) on the source.
 
@@ -84,7 +86,7 @@ class Action(msgspec.Struct, tag=_actiontag, tag_field="action", omit_defaults=T
         return list(self.expand_source())
 
 
-class UnpackAction(Action):
+class UnpackAction(BaseAction):
     """
     Unpacks the archive(s) at source to the destination or current (project) directory.
 
@@ -139,7 +141,7 @@ class UnpackAction(Action):
                     )
 
 
-class AbstractLinkAction(Action):
+class AbstractLinkAction(BaseAction):
     link: str | None = None
     dir: bool = False
     absolute: bool = False
@@ -245,10 +247,12 @@ class BinAction(AbstractLinkAction):
                 self._create_link(source, link_dir / bin_, project_files)
 
 
-class ScriptAction(Action):
+class ScriptAction(BaseAction):
     """
     Runs the given command or script.
     """
+
+    source: str = ""
 
     cmd: str | None = None
     """A single command with its arguments."""
@@ -304,9 +308,34 @@ class ScriptAction(Action):
             self._run_cmd(shlex.quote(fspath(script_path)), project_files)
 
 
-class Project(msgspec.Struct, omit_defaults=True):
-    url: str
-    actions: list[UnpackAction | BinAction | LinkAction | ScriptAction]
+Action = UnpackAction | BinAction | LinkAction | ScriptAction
+
+
+class Project(msgspec.Struct, omit_defaults=True, kw_only=True):
+    name: str
+    install: list[Action] = []
+    uninstall: list[Action] = []
+
+
+class Release(msgspec.Struct, omit_defaults=True):
+    published: date
+    version: str | None
+    description: str | None
+
+
+class ProjectState(msgspec.Struct, omit_defaults=True):
+    description: str | None = None
+    installed: Release | None = None
+    available: Release | None = None
+    installed_files: list[Path] | None = None
+    configured: date | None = None
+
+
+class GithubProject(Project, omit_defaults=True):
+    kind: Literal["github"]  # pyright: ignore[reportGeneralTypeIssues]
+    user: str  # pyright: ignore[reportGeneralTypeIssues]
+    repo: str  # pyright: ignore[reportGeneralTypeIssues]
+    download: list[str]  # pyright: ignore[reportGeneralTypeIssues]
 
 
 if __name__ == "__main__":
