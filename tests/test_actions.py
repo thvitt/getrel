@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from more_itertools import first
 
-from getrel.actions import BaseAction, UnpackAction
+from getrel.actions import BaseAction, ScriptAction, UnpackAction
 from getrel.utils import WorkingDirectory
 
 
@@ -50,3 +50,31 @@ def test_unpack(resources: Path, tmp_path: Path, archive: str):
     expected = tmp_path / "data" / "data.txt"
     assert expected.exists()
     assert expected in files
+
+
+def test_script_cmd(tmp_path: Path):
+    files = []
+    with WorkingDirectory(tmp_path):
+        action = ScriptAction(cmd="pwd")
+        action(files)
+        assert files == [Path.cwd()]
+
+
+def test_script_script(tmp_path: Path):
+    files = []
+    with WorkingDirectory(tmp_path):
+        action = ScriptAction(script="echo foo")
+        action(files)
+    assert files == [Path("foo")]
+
+
+def test_script_shebang(tmp_path: Path):
+    files = []
+    with WorkingDirectory(tmp_path):
+        action = ScriptAction(
+            script="""#!/bin/env python3
+print("foo")
+"""
+        )
+        action(files)
+    assert files == [Path("foo")]

@@ -1,4 +1,5 @@
 import logging
+import os
 import shlex
 import tarfile
 from abc import abstractmethod
@@ -14,6 +15,7 @@ from typing import Literal, overload
 from zipfile import BadZipFile, ZipFile
 
 import msgspec
+from logproc import execute
 
 from getrel.utils import expand
 
@@ -247,6 +249,17 @@ class BinAction(AbstractLinkAction):
                 self._create_link(source, link_dir / bin_, project_files)
 
 
+def path_recorder(files: list[Path]) -> Callable[[str | bytes], None]:
+    def recorder(line: str | bytes) -> None:
+        if isinstance(line, bytes):
+            line = line.decode()
+        line = line.removesuffix("\n")
+        if line:
+            files.append(Path(line))
+
+    return recorder
+
+
 class ScriptAction(BaseAction):
     """
     Runs the given command or script.
@@ -263,39 +276,15 @@ class ScriptAction(BaseAction):
     creates: list[str] | None = None
     """Optional list of files this action may create."""
 
-    # FIXME: use logproc
-
     def __call__(self, project_files: list[Path]) -> None:
         if self.cmd:
-            self._run_cmd(self.cmd, project_files, shell=False)
+            execute(shlex.split(self.cmd), stdout=path_recorder(project_files))
         elif self.script is not None and self.script.strip().startswith("#!"):
             self._run_script(self.script, project_files)
         else:
             assert self.script is not None  # guaranteed by validation
-            self._run_cmd(self.script, project_files, shell=True)
-
-    def _run_cmd(self, cmd: str, project_files: list[Path], shell: bool = False):
-        capture_stdout = self.creates is None
-        if shell:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE if capture_stdout else None,
-                text=True,
-                shell=True,
-            )
-        else:
-            args = shlex.split(cmd)
-            executable = shutil.which(args[0])
-            if executable is None:
-                raise ConfigError(
-                    'Executable %s not found for command "%s"', args[0], cmd
-                )
-            args[0] = executable
-            process = subprocess.Popen(
-                args, stdout=subprocess.PIPE if capture_stdout else None, text=True
-            )
-        stdout, _ = process.communicate()
-        project_files.extend(Path(line) for line in stdout.splitlines() if line)
+            cmd = [os.environ.get("SHELL", "/bin/sh"), "-c", self.script]
+            execute(cmd, stdout=path_recorder(project_files))
 
     def _run_script(self, script: str, project_files: list[Path]):
         with NamedTemporaryFile(
@@ -305,7 +294,7 @@ class ScriptAction(BaseAction):
             script_file.close()
             script_path = Path(script_file.name)
             script_path.chmod(0o700)
-            self._run_cmd(shlex.quote(fspath(script_path)), project_files)
+            execute([fspath(script_path)], stdout=path_recorder(project_files))
 
 
 Action = UnpackAction | BinAction | LinkAction | ScriptAction
