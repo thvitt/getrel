@@ -1,9 +1,19 @@
+"""
+Migration code from previous getrel versions.
+"""
+
+from sys import exc_info
 import logging
+from pprint import pformat
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from datetime import datetime
 from pathlib import Path
 
 import msgspec
+import xdg.BaseDirectory
+
+from getrel.cli import first_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +25,8 @@ from .actions import (
     BinAction,
     GithubProject,
     LinkAction,
+    ProjectState,
+    Release,
     ScriptAction,
     UnpackAction,
 )
@@ -88,3 +100,60 @@ def convert_file(old_config: Path, output: Path):
             outpath,
         )
         outpath.write_bytes(msgspec.yaml.encode(new_project))
+
+
+def convert_state(state_dir: Path) -> ProjectState:
+    old_state = msgspec.json.decode(Path(state_dir, "state.json").read_text())
+    name = state_dir.parent.name
+
+    try:
+        installed = Release(
+            published=datetime.fromisoformat(old_state["installed"]["date"]),
+            version=old_state["installed"]["version"],
+        )
+    except Exception as e:
+        logger.warning(
+            "Error retrieving installed version for %s: %s. Treating as not installed.",
+            name,
+            e,
+        )
+        logger.debug("%s", pformat(old_state, depth=2, sort_dicts=False), exc_info=True)
+        installed = None
+
+    old_releases = None
+    try:
+        old_releases = msgspec.json.decode(Path(state_dir, "releases.json").read_text())
+        if isinstance(old_releases["data"], Sequence):
+            cand_release = old_releases["data"][0]
+        else:
+            cand_release = old_releases["data"]
+        cand_version = cand_release["name"] or cand_release["tag_name"]
+        cand_date = datetime.fromisoformat(cand_release["published_at"])
+        description = cand_release["body"]
+        available = Release(
+            published=cand_date, version=cand_version, description=description
+        )
+    except Exception as e:
+        logger.warning(
+            "Error retrieving candidate version for %s: %s. Will need update", name, e
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "%s", pformat(old_releases, depth=3, sort_dicts=False), exc_info=True
+            )
+        available = None
+
+    config_file = first_config_path("getrel", "projects", name + ".yaml")
+    if config_file is not None and config_file.exists():
+        configured = datetime.fromtimestamp(config_file.stat().st_mtime)
+    else:
+        logger.warning("No config file for %s", name)
+        configured = None
+
+    return ProjectState(
+        name,
+        installed=installed,
+        available=available,
+        installed_files=[Path(s) for s in old_state.get("installed_files", [])],
+        configured=configured,
+    )

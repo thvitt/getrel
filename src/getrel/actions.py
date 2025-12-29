@@ -1,25 +1,29 @@
 import logging
 import os
 import shlex
+import shutil
 import tarfile
 from abc import abstractmethod
 from collections.abc import Callable, Iterable
-from datetime import date
+from datetime import date, datetime
 from fnmatch import fnmatch
 from ntpath import relpath
 from os import fspath
 from pathlib import Path
 from sys import argv
 from tempfile import NamedTemporaryFile
-from typing import Literal, overload
+from typing import Literal, Self, overload
 from zipfile import BadZipFile, ZipFile
 
 import msgspec
+import xdg.BaseDirectory
 from logproc import execute
 
 from getrel.utils import expand
 
 logger = logging.getLogger(__name__)
+
+DATA_DIR = Path(xdg.BaseDirectory.xdg_data_home, "getrel")
 
 
 class ConfigError(ValueError): ...
@@ -299,25 +303,57 @@ class ScriptAction(BaseAction):
 
 Action = UnpackAction | BinAction | LinkAction | ScriptAction
 
+# FIXME: move everything below somewhere else (model?)
 
-class Project(msgspec.Struct, omit_defaults=True, kw_only=True):
+
+class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
     name: str
     install: list[Action] = []
     uninstall: list[Action] = []
 
+    @classmethod
+    def load(cls, src: str | Path) -> Self:
+        if not isinstance(src, Path):
+            config_file = xdg.BaseDirectory.load_first_config(
+                "getrel", "projects", src + ".yaml"
+            )
+            src = Path(config_file) if config_file else Path(src)
+        result = msgspec.yaml.decode(src.read_bytes(), type=cls)
+        result.configured = datetime.fromtimestamp(src.stat().st_mtime)  # pyright: ignore[reportAttributeAccessIssue]
+        return result
+
 
 class Release(msgspec.Struct, omit_defaults=True):
-    published: date
-    version: str | None
-    description: str | None
+    published: datetime
+    version: str | None = None
+    description: str | None = None
 
 
 class ProjectState(msgspec.Struct, omit_defaults=True):
+    name: str
     description: str | None = None
     installed: Release | None = None
     available: Release | None = None
     installed_files: list[Path] | None = None
-    configured: date | None = None
+    configured: datetime | None = None
+
+    def _is_external(self, file: Path) -> bool:
+        """Returns true if the given path is outside the config dir"""
+        return not (file.is_absolute() and file.is_relative_to(DATA_DIR / self.name))
+
+    def _is_binary(self, file: Path) -> bool:
+        return file.is_file() and os.access(file, os.X_OK)
+
+    def _absolute_file(self, file: Path) -> Path:
+        return Path(DATA_DIR, self.name, file)
+
+    def get_installed(self, binary=True, external=True, absolute=False):
+        return [
+            self._absolute_file(file) if absolute else file
+            for file in self.installed_files or []
+            if (not binary or self._is_binary(file))
+            and (not external or self._is_external(file))
+        ]
 
 
 class GithubProject(Project, omit_defaults=True):

@@ -1,17 +1,22 @@
-from httpx import HTTPStatusError
-from getrel.github import get_project_states
 import logging
-from asyncio.tasks import as_completed
+import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
+import msgspec
+from rich import get_console
 import xdg.BaseDirectory
 from cyclopts import App, Parameter
+from httpx import HTTPStatusError
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.table import Column, Table
+from rich.text import Text
 
-from getrel.config import load_project_configs
-from getrel.convert import convert_file
+from getrel.actions import BinAction, ProjectState
+from getrel.config import first_config_path, load_project_configs, load_project_states
+from getrel.convert import convert_file, convert_state
+from getrel.utils import enc_hook
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +37,9 @@ def prepare(
     app(tokens)
 
 
-def _first_config_path(*resource: str | Path) -> Path | None:
-    cand = xdg.BaseDirectory.load_first_config(*resource)
-    if cand:
-        return Path(cand)
-    else:
-        return None
-
-
 @app.command
 def convert_old_config(
-    input: Path | None = _first_config_path("getrel", "projects.toml"),  # noqa: A002, B008
+    input: Path | None = first_config_path("getrel", "projects.toml"),  # noqa: A002, B008
     /,
     output: Annotated[Path, Parameter(alias="-o")] = Path(
         xdg.BaseDirectory.xdg_config_home, "getrel", "projects"
@@ -57,16 +54,112 @@ def convert_old_config(
     convert_file(input, output)
 
 
+def get_state_path():
+    return Path(xdg.BaseDirectory.save_state_path("getrel")) / "projects.msgpack"
+
+
+def save_state(states: dict[str, ProjectState]):
+    state_file = get_state_path()
+    state_file.write_bytes(
+        msgspec.msgpack.encode(list(states.values()), enc_hook=enc_hook)
+    )
+
+
 @app.command
-async def list_projects():
-    async for project in load_project_configs():
+def convert_old_state():
+    states: dict[str, ProjectState] = {}
+    for root in xdg.BaseDirectory.load_data_paths("getrel"):
+        for project in Path(root).iterdir():
+            if not project.is_dir():
+                continue
+            name = project.name
+            try:
+                state = convert_state(project / ".getrel")
+                states[name] = state
+            except Exception as e:
+                logger.error("Failed to read state for %s: %s", name, e)
+    save_state(states)
+
+
+def _format_binary(binary: Path):
+    cmd = binary.name
+    found = shutil.which(binary.name)
+    if not found:
+        return Text(str(binary), style="warning")
+    elif binary.samefile(found):
+        return Text(cmd, style="bold")
+    else:
+        return Text(cmd, style="red")
+
+
+@app.command
+def info(projects: list[str] | None = None):
+    configs = {project.name: project for project in load_project_configs()}
+    states = load_project_states()
+    if projects is None:
+        projects = list({*configs, *states})
+    table = Table(
+        Column("Name", style="bold"),
+        "Version ([green]update[/green], [red]not installed[/red])",
+        "Binaries ([red]shadowed[/red], [dim]missing[/dim])",
+        "description",
+        box=None,
+    )
+    for project in projects:
+        version = "?"
+        description = "[dim]no info yet[/dim]"
+        binaries = ""
+        installed = False
+        if project in states:
+            state = states[project]
+            description = state.description
+            if state.installed:
+                installed = True
+                if (
+                    state.available
+                    and state.available.published > state.installed.published
+                ):
+                    version = f"{state.installed.version} → [bold green]{state.available.version}[/bold green]"
+                else:
+                    version = f"{state.installed.version}"
+                binaries = Text(" ").join(
+                    _format_binary(binary)
+                    for binary in state.get_installed(
+                        binary=True, external=True, absolute=True
+                    )
+                )
+            elif state.available:
+                version = f"[red]{state.available.version}"
+                binaries = Text(
+                    " ".join(
+                        action.bin or action.source
+                        for action in configs[project].install
+                        if isinstance(action, BinAction)
+                    ),
+                    style="dim",
+                )
+        table.add_row(
+            project,
+            version,
+            binaries,
+            description,
+            style="dim" if not installed else None,
+        )
+    get_console().print(table)
+
+
+@app.command
+def list_projects():
+    for project in load_project_configs():
         print(project)
 
 
-@app.command
-async def query_projects():
-    projects = [p async for p in load_project_configs()]
-    try:
-        print(get_project_states(projects))
-    except HTTPStatusError as e:
-        logger.error("%s:\n%s", e, e.response.text)
+#
+#
+# @app.command
+# async def query_projects():
+#     projects = [p async for p in load_project_configs()]
+#     try:
+#         print(get_project_states(projects))
+#     except HTTPStatusError as e:
+#         logger.error("%s:\n%s", e, e.response.text)
