@@ -4,18 +4,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import msgspec
-from rich import get_console
 import xdg.BaseDirectory
 from cyclopts import App, Parameter
 from httpx import HTTPStatusError
+from rich import get_console
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Column, Table
 from rich.text import Text
 
 from getrel.actions import BinAction, ProjectState
-from getrel.config import first_config_path, load_project_configs, load_project_states
+from getrel.config import (
+    first_config_path,
+    load_project_configs,
+    load_project_states,
+    save_state,
+)
 from getrel.convert import convert_file, convert_state
+from getrel.github import GithubProjectManager
 from getrel.utils import enc_hook
 
 logger = logging.getLogger(__name__)
@@ -54,17 +60,6 @@ def convert_old_config(
     convert_file(input, output)
 
 
-def get_state_path():
-    return Path(xdg.BaseDirectory.save_state_path("getrel")) / "projects.msgpack"
-
-
-def save_state(states: dict[str, ProjectState]):
-    state_file = get_state_path()
-    state_file.write_bytes(
-        msgspec.msgpack.encode(list(states.values()), enc_hook=enc_hook)
-    )
-
-
 @app.command
 def convert_old_state():
     states: dict[str, ProjectState] = {}
@@ -92,8 +87,8 @@ def _format_binary(binary: Path):
         return Text(cmd, style="red")
 
 
-@app.command
-def info(projects: list[str] | None = None):
+@app.command(name="list")
+def list_projects(projects: list[str] | None = None):
     configs = {project.name: project for project in load_project_configs()}
     states = load_project_states()
     if projects is None:
@@ -149,17 +144,7 @@ def info(projects: list[str] | None = None):
 
 
 @app.command
-def list_projects():
-    for project in load_project_configs():
-        print(project)
-
-
-#
-#
-# @app.command
-# async def query_projects():
-#     projects = [p async for p in load_project_configs()]
-#     try:
-#         print(get_project_states(projects))
-#     except HTTPStatusError as e:
-#         logger.error("%s:\n%s", e, e.response.text)
+def update():
+    manager = GithubProjectManager()
+    new = manager.look_for_new_versions()
+    list_projects([p.name for p in new])

@@ -1,3 +1,5 @@
+from attr import has
+from functools import total_ordering
 import logging
 import os
 import shlex
@@ -327,6 +329,22 @@ class Release(msgspec.Struct, omit_defaults=True):
     published: datetime
     version: str | None = None
     description: str | None = None
+
+    def __lt__(self, value: object, /) -> bool:
+        if isinstance(value, Release):
+            return self.published < value.published
+        elif isinstance(value, datetime):
+            return self.published < value
+        else:
+            return NotImplemented
+
+    def __gt__(self, value: object, /) -> bool:
+        if isinstance(value, Release):
+            return self.published > value.published
+        elif isinstance(value, datetime):
+            return self.published > value
+        else:
+            return NotImplemented
 
 
 class ProjectState(msgspec.Struct, omit_defaults=True):

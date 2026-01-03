@@ -1,12 +1,16 @@
+from datetime import datetime
 import logging
 import os
 from collections.abc import Iterable, Sequence
+from pprint import pformat
+from turtle import st
 
-from httpx import Client
 import msgspec
+from httpx import Client
 
-from getrel.actions import GithubProject, ProjectState
-from getrel.config import load_project_configs
+from getrel.actions import GithubProject, ProjectState, Release
+from getrel.cli import save_state
+from getrel.config import load_project_configs, load_project_states
 from getrel.utils import split_list
 
 logger = logging.getLogger(__name__)
@@ -37,7 +41,7 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
         for i, project in enumerate(projects)
     ]
     with Client(
-        headers={"Authorization": f"Beaerar {os.environ['GITHUB_TOKEN']}"}, http2=True
+        headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"}, http2=True
     ) as client:
         for chunk_start in range(0, len(projects), chunk_size):
             query = (
@@ -48,9 +52,13 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
             logger.debug("GraphQL Query: %s", query)
             response = client.post(GRAPHQL_API, json={"query": query})
             response.raise_for_status()
-            for project_id, data in response.json()["data"].items():
-                project = projects[int(project_id[1:])]
-                yield project, data
+            answer = response.json()
+            if "errors" in answer:
+                logger.error("Chunk %d: %s", chunk_start, pformat(answer))
+            if "data" in answer:
+                for project_id, data in answer["data"].items():
+                    project = projects[int(project_id[1:])]
+                    yield project, data
 
 
 def get_project_states_old(projects: Sequence[GithubProject]):
@@ -89,3 +97,59 @@ class GithubProjectManager:
             load_project_configs(), lambda p: isinstance(p, GithubProject)
         )
         self.configs = {project.name: project for project in ours}
+        self.states = load_project_states()
+
+    def look_for_new_versions(self, save=True):
+        new: list[ProjectState] = []
+        for config, result in run_queries(
+            list(self.configs.values()),
+            """\
+            repository(owner: "{project.user}", name: "{project.repo}") {{
+                description
+                latestRelease {{
+                    tagName
+                    name
+                    publishedAt
+                    description
+                }}
+            }}""",
+        ):
+            if config.name not in self.states:
+                self.states[config.name] = state = ProjectState(config.name)
+                logger.debug("Found new state for %s", config.name)
+            else:
+                state = self.states[config.name]
+            state.description = result.get("description", state.description)
+            if "latestRelease" in result:
+                latest_release = Release(
+                    published=datetime.fromisoformat(
+                        result["latestRelease"]["publishedAt"]
+                    ),
+                    version=result["latestRelease"].get("name")
+                    or result["latestRelease"].get("tagName"),
+                    description=result["latestRelease"].get("description"),
+                )
+                if state.available and latest_release > state.available:
+                    logger.info(
+                        "%s: New release %s (%s)",
+                        config.name,
+                        latest_release.version,
+                        latest_release.published.isoformat(),
+                    )
+                    state.available = latest_release
+                    new.append(state)
+                elif state.available is None:
+                    logger.info(
+                        "%s: Release %s available (%s)",
+                        config.name,
+                        latest_release.version,
+                        latest_release.published.isoformat(),
+                    )
+                    state.available = latest_release
+                    new.append(state)
+            else:
+                logger.warning("%s does not have a release.", config.name)
+
+        if save:
+            save_state(self.states)
+        return new
