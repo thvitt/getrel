@@ -373,6 +373,12 @@ class ProjectState(msgspec.Struct, omit_defaults=True):
             and (not external or self._is_external(file))
         ]
 
+    @property
+    def updateable(self):
+        return self.available and (
+            not self.installed or self.available.published > self.installed.published
+        )
+
 
 class GithubProject(Project, omit_defaults=True):
     kind: Literal["github"]  # pyright: ignore[reportGeneralTypeIssues]

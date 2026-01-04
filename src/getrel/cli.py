@@ -88,7 +88,17 @@ def _format_binary(binary: Path):
 
 
 @app.command(name="list")
-def list_projects(projects: list[str] | None = None):
+def list_projects(
+    projects: list[str] | None = None,
+    new: Annotated[bool, Parameter(alias="-n", negative=False)] = False,
+):
+    """
+    List the projects.
+
+    Args:
+        projects: only list specific projects, identified by name
+        new: only list projects for which updates are available
+    """
     configs = {project.name: project for project in load_project_configs()}
     states = load_project_states()
     if projects is None:
@@ -105,16 +115,15 @@ def list_projects(projects: list[str] | None = None):
         description = "[dim]no info yet[/dim]"
         binaries = ""
         installed = False
+        updatable = False
         if project in states:
             state = states[project]
             description = state.description
             if state.installed:
                 installed = True
-                if (
-                    state.available
-                    and state.available.published > state.installed.published
-                ):
-                    version = f"{state.installed.version} → [bold green]{state.available.version}[/bold green]"
+                if state.updateable:
+                    version = f"{state.installed.version} → [bold green]{state.available.version}[/bold green]"  # pyright: ignore[reportOptionalMemberAccess]
+                    updatable = True
                 else:
                     version = f"{state.installed.version}"
                 binaries = Text(" ").join(
@@ -133,13 +142,14 @@ def list_projects(projects: list[str] | None = None):
                     ),
                     style="dim",
                 )
-        table.add_row(
-            project,
-            version,
-            binaries,
-            description,
-            style="dim" if not installed else None,
-        )
+        if not new or updatable:
+            table.add_row(
+                project,
+                version,
+                binaries,
+                description,
+                style="dim" if not installed else None,
+            )
     get_console().print(table)
 
 
