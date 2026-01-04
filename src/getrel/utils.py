@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterable, Mapping
 from os import chdir
 from os.path import expandvars
 from pathlib import Path
-from typing import Any, Generic, Type
+from typing import Any
 
 
 def expand(src: str | Path) -> Path:
@@ -66,8 +66,8 @@ def enc_hook(obj: Any) -> Any:
         raise NotImplementedError(f"Objects of type {type(obj)} are not supported.")
 
 
-def dec_hook(type: Type, obj: Any) -> Any:  # noqa: A002, UP006
-    if type is Path:
+def dec_hook(type_: type, obj: Any) -> Any:  # noqa: A002
+    if type_ is Path:
         return Path(obj)
     else:
-        raise NotImplementedError(f"Objects of type {type} are not supported.")
+        raise NotImplementedError(f"Objects of type {type_} are not supported.")

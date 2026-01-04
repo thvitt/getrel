@@ -1,17 +1,16 @@
-from attr import has
-from functools import total_ordering
+from __future__ import annotations
+
 import logging
 import os
 import shlex
-import shutil
 import tarfile
 from abc import abstractmethod
-from collections.abc import Callable, Iterable
-from datetime import date, datetime
+from collections.abc import Callable, Container, Iterable
+from datetime import datetime
 from fnmatch import fnmatch
-from ntpath import relpath
 from os import fspath
 from pathlib import Path
+from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
 from typing import Literal, Self, overload
@@ -21,7 +20,7 @@ import msgspec
 import xdg.BaseDirectory
 from logproc import execute
 
-from getrel.utils import expand
+from getrel.utils import WorkingDirectory, expand
 
 logger = logging.getLogger(__name__)
 
@@ -197,15 +196,21 @@ class AbstractLinkAction(BaseAction):
         if self.absolute:
             final_path = source.absolute()
         else:
-            final_path = relpath(source, link_path.parent)
+            final_path = Path(os.path.relpath(source, link_path.parent))
         if link_path.exists():
             if link_path.is_symlink():
-                if link_path.readlink().samefile(final_path):
+                if link_path.readlink().resolve() == final_path.resolve():
                     logger.info(
                         "Recreating symbolic link %s to %s", link_path, final_path
                     )
                 else:
-                    logger.warning(
+                    level = (
+                        logging.INFO
+                        if final_path.resolve().is_relative_to(Path().absolute())
+                        else logging.WARNING
+                    )
+                    logger.log(
+                        level,
                         "Creating symbolic link %s to %s, overwriting existing link to %s",
                         link_path,
                         final_path,
@@ -219,6 +224,7 @@ class AbstractLinkAction(BaseAction):
                 )
         else:
             logger.debug("Creating symbolic link %s to %s", link_path, final_path)
+        link_path.unlink(missing_ok=True)
         link_path.symlink_to(final_path)
         project_files.append(link_path)
 
@@ -247,6 +253,7 @@ class BinAction(AbstractLinkAction):
         link_dir = self._prepare_linkdir(project_files)
         bin_ = None if self.bin is None else expand(self.bin)
         for source in self.sources:
+            source.chmod(source.stat().st_mode | S_IXUSR | S_IXGRP | S_IXOTH)
             if bin_ is None:
                 self._create_link(source, link_dir, project_files)
             elif bin_.is_absolute():
@@ -312,6 +319,7 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
     name: str
     install: list[Action] = []
     uninstall: list[Action] = []
+    download: list[str] = []
 
     @classmethod
     def load(cls, src: str | Path) -> Self:
@@ -323,6 +331,51 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         result = msgspec.yaml.decode(src.read_bytes(), type=cls)
         result.configured = datetime.fromtimestamp(src.stat().st_mtime)  # pyright: ignore[reportAttributeAccessIssue]
         return result
+
+    def do_install(self, state: ProjectState):
+        with WorkingDirectory(state.project_dir):
+            for action in self.install:
+                action(state.installed_files)
+
+    def is_asset(self, file: str | Path) -> bool:
+        file_ = str(file)
+        return any(fnmatch(file_, pattern) for pattern in self.download)
+
+    def do_uninstall(
+        self, state: ProjectState, delete_assets=False, keep: Container[Path] = []
+    ):
+        with WorkingDirectory(state.project_dir):
+            for action in self.uninstall:
+                action(state.installed_files)
+            remaining = []
+            for file in reversed(state.installed_files):
+                if (not delete_assets and self.is_asset(file)) or file in keep:
+                    remaining.append(file)
+                else:
+                    try:
+                        if file.is_dir():
+                            file.rmdir()
+                        else:
+                            file.unlink()
+                        logger.debug("Uninstalling %s: Removed %s", self.name, file)
+                    except OSError as e:
+                        level = (
+                            logging.INFO
+                            if isinstance(e, FileNotFoundError)
+                            else logging.WARNING
+                        )
+                        logger.log(
+                            level,
+                            "Uninstalling %s: Could not delete %s (%s)",
+                            self.name,
+                            file,
+                            e,
+                        )
+                        if file.exists():
+                            remaining.append(file)
+            state.installed_files.clear()
+            state.installed_files.extend(remaining)
+        state.installed = None
 
 
 class Release(msgspec.Struct, omit_defaults=True):
@@ -352,12 +405,12 @@ class ProjectState(msgspec.Struct, omit_defaults=True):
     description: str | None = None
     installed: Release | None = None
     available: Release | None = None
-    installed_files: list[Path] | None = None
+    installed_files: list[Path] = []
     configured: datetime | None = None
 
     def _is_external(self, file: Path) -> bool:
         """Returns true if the given path is outside the config dir"""
-        return not (file.is_absolute() and file.is_relative_to(DATA_DIR / self.name))
+        return not (file.is_absolute() and file.is_relative_to(self.project_dir))
 
     def _is_binary(self, file: Path) -> bool:
         return file.is_file() and os.access(file, os.X_OK)
@@ -379,12 +432,19 @@ class ProjectState(msgspec.Struct, omit_defaults=True):
             not self.installed or self.available.published > self.installed.published
         )
 
+    @property
+    def project_dir(self):
+        return DATA_DIR / self.name
+
 
 class GithubProject(Project, omit_defaults=True):
     kind: Literal["github"]  # pyright: ignore[reportGeneralTypeIssues]
     user: str  # pyright: ignore[reportGeneralTypeIssues]
     repo: str  # pyright: ignore[reportGeneralTypeIssues]
-    download: list[str]  # pyright: ignore[reportGeneralTypeIssues]
+
+    @property
+    def url(self):
+        return f"https://github.com/{self.user}/{self.repo}"
 
 
 if __name__ == "__main__":

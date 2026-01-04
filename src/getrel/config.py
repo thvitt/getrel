@@ -17,6 +17,13 @@ def load_project_configs():
         yield GithubProject.load(config_file)
 
 
+def load_project_config(name: str):
+    config_file = Path(
+        xdg.BaseDirectory.load_first_config("getrel", "projects", name + ".yaml")
+    )
+    return GithubProject.load(config_file)
+
+
 def first_config_path(*resource: str | Path) -> Path | None:
     cand = xdg.BaseDirectory.load_first_config(*resource)
     if cand:
@@ -32,12 +39,15 @@ def load_project_states():
         ),
         "projects.msgpack",
     )
-    return {
-        state.name: state
-        for state in msgspec.msgpack.decode(
-            state_file.read_bytes(), type=list[ProjectState], dec_hook=dec_hook
-        )
-    }
+    if state_file.exists():
+        return {
+            state.name: state
+            for state in msgspec.msgpack.decode(
+                state_file.read_bytes(), type=list[ProjectState], dec_hook=dec_hook
+            )
+        }
+    else:
+        return {}
 
 
 def get_state_path():

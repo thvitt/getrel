@@ -1,21 +1,32 @@
-from datetime import datetime
 import logging
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Container, Iterable, Sequence
+from datetime import datetime
+from fnmatch import fnmatch
+from pathlib import Path
 from pprint import pformat
-from turtle import st
+from typing import Any
 
-import msgspec
 from httpx import Client
+from msgspec import Struct
+from rich.progress import Progress
 
-from getrel.actions import GithubProject, ProjectState, Release
+from getrel.actions import GithubProject, Project, ProjectState, Release
 from getrel.cli import save_state
 from getrel.config import load_project_configs, load_project_states
-from getrel.utils import split_list
+from getrel.utils import WorkingDirectory, split_list
 
 logger = logging.getLogger(__name__)
 
 GRAPHQL_API = "https://api.github.com/graphql"
+
+
+class Asset(Struct):
+    name: str
+    contentType: str  # noqa: N815
+    downloadUrl: str  # noqa: N815
+    downloadCount: int  # noqa: N815
+    size: int
 
 
 def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int = 50):
@@ -61,33 +72,6 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
                     yield project, data
 
 
-def get_project_states_old(projects: Sequence[GithubProject]):
-    queries = [
-        f"""
-            r{i}: repository(owner: "{project.user}", name: "{project.repo}") {{
-                owner {{ login }}
-                name
-                description
-                latestRelease {{
-                    tagName
-                    name
-                    publishedAt
-                }}
-            }}
-        """
-        for i, project in enumerate(projects)
-    ]
-    query = "query {" + "\n".join(queries) + "}"
-    with Client(
-        headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"}, http2=True
-    ) as client:
-        logger.info("Requesting status from GitHub for %d projects", len(queries))
-        logger.debug("GraphQL Query: %s", query)
-        response = client.post(GRAPHQL_API, json={"query": query})
-        response.raise_for_status()
-        return response.json()
-
-
 class GithubProjectManager:
     configs: dict[str, GithubProject]
     states: dict[str, ProjectState]
@@ -99,7 +83,65 @@ class GithubProjectManager:
         self.configs = {project.name: project for project in ours}
         self.states = load_project_states()
 
+    def update_project_state(self, project: str, result: dict[str, Any]) -> bool:
+        """
+        Updates the project state of the given project.
+
+        Args:
+            project: project name
+            result: query result from github, as delivered by run_queries
+
+        Returns:
+            True if the project has a new release
+        """
+        config = self.configs[project]
+        if config.name not in self.states:
+            self.states[config.name] = state = ProjectState(config.name)
+            logger.debug("No known state for %s, creating one", config.name)
+        else:
+            state = self.states[config.name]
+        state.description = result.get("description", state.description)
+        if "latestRelease" in result:
+            latest_release = Release(
+                published=datetime.fromisoformat(
+                    result["latestRelease"]["publishedAt"]
+                ),
+                version=result["latestRelease"].get("name")
+                or result["latestRelease"].get("tagName"),
+                description=result["latestRelease"].get("description"),
+            )
+            if state.available and latest_release > state.available:
+                logger.info(
+                    "%s: New release %s (%s)",
+                    config.name,
+                    latest_release.version,
+                    latest_release.published.isoformat(),
+                )
+                state.available = latest_release
+                return True
+            elif state.available is None:
+                logger.info(
+                    "%s: Release %s available (%s)",
+                    config.name,
+                    latest_release.version,
+                    latest_release.published.isoformat(),
+                )
+                state.available = latest_release
+                return True
+        else:
+            logger.warning("%s does not have a release.", config.name)
+        return False
+
     def look_for_new_versions(self, save=True):
+        """
+        Checks GitHub for all projects that have new releases.
+
+        Args:
+            save: if True, save the state file after updating
+
+        Returns:
+            updated states of all projects with new releases
+        """
         new: list[ProjectState] = []
         for config, result in run_queries(
             list(self.configs.values()),
@@ -114,42 +156,136 @@ class GithubProjectManager:
                 }}
             }}""",
         ):
-            if config.name not in self.states:
-                self.states[config.name] = state = ProjectState(config.name)
-                logger.debug("Found new state for %s", config.name)
-            else:
-                state = self.states[config.name]
-            state.description = result.get("description", state.description)
-            if "latestRelease" in result:
-                latest_release = Release(
-                    published=datetime.fromisoformat(
-                        result["latestRelease"]["publishedAt"]
-                    ),
-                    version=result["latestRelease"].get("name")
-                    or result["latestRelease"].get("tagName"),
-                    description=result["latestRelease"].get("description"),
-                )
-                if state.available and latest_release > state.available:
-                    logger.info(
-                        "%s: New release %s (%s)",
-                        config.name,
-                        latest_release.version,
-                        latest_release.published.isoformat(),
-                    )
-                    state.available = latest_release
-                    new.append(state)
-                elif state.available is None:
-                    logger.info(
-                        "%s: Release %s available (%s)",
-                        config.name,
-                        latest_release.version,
-                        latest_release.published.isoformat(),
-                    )
-                    state.available = latest_release
-                    new.append(state)
-            else:
-                logger.warning("%s does not have a release.", config.name)
+            if self.update_project_state(config.name, result):
+                new.append(self.states[config.name])
 
         if save:
             save_state(self.states)
         return new
+
+    def updateable_projects(self):
+        return [p.name for p in self.states.values() if p.updateable]
+
+    def list_artifacts(self, projects: list[str] | None = None):
+        """
+        Lists the artifact data for all given projects.
+
+        Args:
+            projects: The projects for which to fetch data. If none given, all 'updateable' projects are used.
+
+        Yields:
+            a tuple (config, list[Artifact]) for each of the respective projects
+        """
+        if projects is None:
+            projects = self.updateable_projects()
+            logger.debug("Selected all updateble projects: %s", projects)
+        configs = [self.configs[name] for name in projects]
+        logger.info(
+            "Fetching release info for %d projects: %s",
+            len(projects),
+            " ".join(projects),
+        )
+        for config, data in run_queries(
+            configs,
+            """
+                repository(owner: "{project.user}", name: "{project.repo}") {{
+                    description
+                    latestRelease {{
+                        tagName
+                        name
+                        publishedAt
+                        description
+                        releaseAssets(first: 100) {{
+                            nodes {{
+                                name
+                                contentType
+                                downloadUrl
+                                downloadCount
+                                size
+                            }}
+                        }}
+                    }}
+                }}""",
+            chunk_size=10,
+        ):
+            self.update_project_state(config.name, data)
+            raw_assets = (
+                data.get("latestRelease", {}).get("releaseAssets", {}).get("nodes")
+            )
+            if raw_assets:
+                yield config, [Asset(**raw_asset) for raw_asset in raw_assets]
+            else:
+                logger.warning(
+                    "%s: Release %s has no downloadable assets",
+                    config.name,
+                    self.states[config.name].available.version,
+                )
+        save_state(self.states)
+
+    def installed(self, project: str | Project) -> Release | None:
+        name = project.name if isinstance(project, Project) else str(project)
+        if name in self.configs:
+            if name not in self.states:
+                self.states[name] = ProjectState(name)
+            return self.states[name].installed
+
+    def uninstall(
+        self,
+        project: GithubProject | str,
+        keep: Container[Path] = [],
+        delete_assets: bool = False,
+    ):
+        if not isinstance(project, Project):
+            project = self.configs[project]
+        if self.installed(project):
+            project.do_uninstall(
+                self.states[project.name], keep=keep, delete_assets=delete_assets
+            )
+            save_state(self.states)
+
+    def install_or_update(self, project: GithubProject, assets: Container[Path]):
+        if self.installed(project):
+            self.uninstall(project, keep=assets)
+        project.do_install(self.states[project.name])
+
+    def download(
+        self,
+        project: GithubProject,
+        assets: Iterable[Asset],
+        client: Client,
+        progress: Progress,
+    ):
+        state = self.states[project.name]
+        with WorkingDirectory(state.project_dir):
+            selected_assets = [
+                asset
+                for asset in assets
+                if any(fnmatch(asset.name, pat) for pat in project.download)
+            ]
+            logger.info(
+                "%s: %d of %d artefacts: %s",
+                project.name,
+                len(selected_assets),
+                len(assets),
+                ", ".join(a.name for a in selected_assets),
+            )
+            for asset in selected_assets:
+                asset_path = Path(asset.name)
+                task = progress.add_task(asset.name, total=asset.size)
+                with (
+                    client.stream(
+                        "GET", asset.downloadUrl, follow_redirects=True
+                    ) as resp,
+                    asset_path.open("wb") as file,
+                ):
+                    for chunk in resp.iter_bytes():  # noqa: FURB122
+                        file.write(chunk)
+                        progress.advance(task, len(chunk))
+                if state.installed_files is None:
+                    state.installed_files = []
+                if asset_path not in state.installed_files:
+                    state.installed_files.append(asset_path)
+                yield asset_path
+                progress.stop_task(task)
+                progress.remove_task(task)
+            save_state(self.states)

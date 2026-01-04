@@ -1,28 +1,37 @@
+from ast import Param
+from collections.abc import Iterable
 import logging
+from multiprocessing import managers
 import shutil
 from pathlib import Path
+from sys import exc_info
 from typing import TYPE_CHECKING, Annotated
 
-import msgspec
+from cyclopts.annotations import AnnotatedType
+import httpx
 import xdg.BaseDirectory
 from cyclopts import App, Parameter
+from cyclopts.help import MarkdownFormatter
 from httpx import HTTPStatusError
 from rich import get_console
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markdown import Markdown
+from rich.progress import DownloadColumn, MofNCompleteColumn, Progress
 from rich.table import Column, Table
 from rich.text import Text
 
 from getrel.actions import BinAction, ProjectState
 from getrel.config import (
     first_config_path,
+    load_project_config,
     load_project_configs,
     load_project_states,
     save_state,
 )
 from getrel.convert import convert_file, convert_state
 from getrel.github import GithubProjectManager
-from getrel.utils import enc_hook
+from getrel.utils import WorkingDirectory, enc_hook
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +44,21 @@ def prepare(
     *tokens: Annotated[str, Parameter(show=False, allow_leading_hyphen=True)],
     verbose: Annotated[int, Parameter(alias="-v", count=True)] = 0,
 ):
+    """
+    Args:
+        verbose: Report what is done. Repeatable for increasing amount of debugging info.
+    """
     logging.basicConfig(
-        level=logging.WARNING - 10 * verbose,
         format="%(message)s",
-        handlers=[RichHandler(console=Console(stderr=True))],
+        handlers=[RichHandler(console=app.error_console)],
     )
+    global_level = logging.WARNING - (verbose // 2) * 10
+    local_level = logging.WARNING - ((verbose + 1) // 2 * 10)
+    logging.getLogger().setLevel(global_level)
+    logging.getLogger("getrel").setLevel(local_level)
     app(tokens)
 
 
-@app.command
 def convert_old_config(
     input: Path | None = first_config_path("getrel", "projects.toml"),  # noqa: A002, B008
     /,
@@ -153,8 +168,149 @@ def list_projects(
     get_console().print(table)
 
 
+def _all_files(top: Path):
+    for root, dirs, files in top.walk():
+        for name in dirs:
+            yield root / name
+        for name in files:
+            yield root / name
+
+
+def _ls_files(files: Iterable[Path], sep="\n  ") -> str:
+    return sep + sep.join(map(str, files))
+
+
+@app.command
+def check(projects: list[str] | None = None):
+    configs = {project.name: project for project in load_project_configs()}
+    states = load_project_states()
+    projects = projects or list({*configs, *states})
+
+    for project in projects:
+        if project not in configs:
+            logger.error("Project %s does not have a config", project)
+        if project not in states:
+            logger.info(
+                "No status known for project %s. Run %s update", project, app.name
+            )
+        else:
+            state = states[project]
+            with WorkingDirectory(state.project_dir):
+                if not state.installed and state.installed_files:
+                    logger.error(
+                        "Project %s is not installed, but has %d installed files: %s",
+                        project,
+                        len(state.installed_files or []),
+                        _ls_files(state.installed_files),
+                    )
+                if state.installed and not state.installed_files:
+                    logger.warning(
+                        "Project %s is installed, but has no installed files", project
+                    )
+                missing_files = [
+                    file for file in state.installed_files if not Path(file).exists()
+                ]
+                if missing_files:
+                    logger.error(
+                        "Project %s: %d files are marked as installed, but cannot be found: %s",
+                        project,
+                        len(missing_files),
+                        _ls_files(missing_files),
+                    )
+                extra_files = set(_all_files(Path())) - set(state.installed_files)
+                if extra_files:
+                    logger.warning(
+                        "Project %s has %d extra files in its project directory: %s",
+                        project,
+                        len(extra_files),
+                        _ls_files(extra_files),
+                    )
+
+
+@app.command
+def info(project: str, /):
+    """Print information about a specific project."""
+    state = load_project_states()[project]
+    config = load_project_config(project)
+    md = Table.grid(padding=1)
+    md.add_row(project, state.description, style="bold")
+    md.add_section()
+    md.add_row("URL", config.url)
+    md.add_row("Download", ", ".join(config.download))
+    md.add_section()
+    if state.available:
+        md.add_row("Release Notes", Markdown(state.available.description or ""))
+    get_console().print(md)
+
+
 @app.command
 def update():
+    """Update all projects metadata and list the projects with updates."""
     manager = GithubProjectManager()
     new = manager.look_for_new_versions()
     list_projects([p.name for p in new])
+
+
+@app.command
+def upgrade(projects: list[str] | None = None):
+    manager = GithubProjectManager()
+    if projects is None:
+        projects = manager.updateable_projects()
+    with (
+        httpx.Client() as client,
+        Progress(
+            *Progress.get_default_columns(),
+            DownloadColumn(),
+            transient=True,
+            console=app.error_console,
+        ) as progress,
+    ):
+        for project, artefacts in progress.track(
+            manager.list_artifacts(projects),
+            description="Getting artefacts ...",
+            total=len(projects),
+        ):
+            try:
+                assets = list(manager.download(project, artefacts, client, progress))
+                manager.install_or_update(project, assets)
+                manager.states[project.name].installed = manager.states[
+                    project.name
+                ].available
+                save_state(manager.states)
+            except Exception as e:
+                logger.error(
+                    "Failed to install %s: %s",
+                    project.name,
+                    e,
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
+
+
+@app.command
+def install(projects: list[str] | None = None, missing: bool = False):
+    projects = projects or []
+    manager = GithubProjectManager()
+    if missing:
+        projects.extend(
+            project for project in manager.configs if not manager.installed(project)
+        )
+    if not projects:
+        logger.error("No projects to install.")
+        return 1
+    return upgrade(projects)
+
+
+@app.command
+def uninstall(
+    projects: list[str], delete_assets: Annotated[bool, Parameter(alias="-a")] = False
+):
+    """
+    Uninstall the given projects.
+
+    Args:
+        projects: Names of the project(s) to remove.
+        delete_assets: Also remove the downloaded files.
+    """
+    manager = GithubProjectManager()
+    for project in projects:
+        manager.uninstall(project, delete_assets=delete_assets)

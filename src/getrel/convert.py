@@ -2,13 +2,13 @@
 Migration code from previous getrel versions.
 """
 
-from sys import exc_info
 import logging
-from pprint import pformat
 import tomllib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
+from pprint import pformat
+from sys import exc_info
 
 import msgspec
 import xdg.BaseDirectory
