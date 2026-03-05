@@ -5,7 +5,6 @@ import os
 import shlex
 import tarfile
 from abc import abstractmethod
-from collections.abc import Callable, Container, Iterable
 from datetime import datetime
 from fnmatch import fnmatch
 from os import fspath
@@ -13,7 +12,7 @@ from pathlib import Path
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
-from typing import Literal, Self, overload
+from typing import TYPE_CHECKING, Literal, Self, overload
 from zipfile import BadZipFile, ZipFile
 
 import msgspec
@@ -21,6 +20,9 @@ import xdg.BaseDirectory
 from logproc import execute
 
 from getrel.utils import WorkingDirectory, expand
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Container, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +208,9 @@ class AbstractLinkAction(BaseAction):
                 else:
                     level = (
                         logging.INFO
-                        if final_path.resolve().is_relative_to(Path().absolute())
+                        if final_path.readlink()
+                        .resolve()
+                        .is_relative_to(Path().absolute())
                         else logging.WARNING
                     )
                     logger.log(

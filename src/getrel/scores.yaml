@@ -1,0 +1,23 @@
+assets:
+  - name: "*x86_64*"
+    score: 11
+  - name: "*amd64*"
+    score: 10
+  - name: "*linux*"
+    score: 10
+  - name: "*darwin*"
+    score: -10
+  - name: "*win32*"
+    score: -10
+  - name: "*win64*"
+    score: -10
+  - name: "*windows*"
+    score: -10
+  - name: "*.tar.gz"
+    score: 7.5
+  - name: "*.tar.xz"
+    score: 7.5
+  - name: "*.deb"
+    score: 5
+  - name: "*.AppImage"
+    score: 4

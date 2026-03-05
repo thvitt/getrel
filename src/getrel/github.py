@@ -3,22 +3,28 @@ import os
 from collections.abc import Container, Iterable, Sequence
 from datetime import datetime
 from fnmatch import fnmatch
+from itertools import count
 from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import Any, cast
 
 from httpx import Client
 from msgspec import Struct
 from rich.progress import Progress
 
 from getrel.actions import GithubProject, Project, ProjectState, Release
-from getrel.cli import save_state
-from getrel.config import load_project_configs, load_project_states
-from getrel.utils import WorkingDirectory, split_list
+from getrel.config import load_project_configs, load_project_states, save_state
+from getrel.utils import WorkingDirectory, first, split_list
 
 logger = logging.getLogger(__name__)
 
 GRAPHQL_API = "https://api.github.com/graphql"
+
+
+class ProjectExistsError(ValueError):
+    def __init__(self, project: Project):
+        self.project = project
+        super().__init__(f"Project already exists: {project}")
 
 
 class Asset(Struct):
@@ -60,7 +66,7 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
                 + "\n".join(queries[chunk_start : chunk_start + chunk_size])
                 + "}"
             )
-            logger.debug("GraphQL Query: %s", query)
+            # logger.debug("GraphQL Query: %s", query)
             response = client.post(GRAPHQL_API, json={"query": query})
             response.raise_for_status()
             answer = response.json()
@@ -70,6 +76,14 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
                 for project_id, data in answer["data"].items():
                     project = projects[int(project_id[1:])]
                     yield project, data
+
+
+def _split_github_url(url: str) -> tuple[str, str]:
+    parsed = urlparse(url)
+    if not parsed.hostname or not parsed.hostname.endswith("github.com"):
+        raise ValueError(f"Not a Github URL: {url}")
+    parts = parsed.path.split("/")
+    return parts[0], parts[1]
 
 
 class GithubProjectManager:
@@ -166,7 +180,9 @@ class GithubProjectManager:
     def updateable_projects(self):
         return [p.name for p in self.states.values() if p.updateable]
 
-    def list_artifacts(self, projects: list[str] | None = None):
+    def list_artifacts(
+        self, projects_or_names: list[str] | list[GithubProject] | None = None
+    ):
         """
         Lists the artifact data for all given projects.
 
@@ -176,10 +192,16 @@ class GithubProjectManager:
         Yields:
             a tuple (config, list[Artifact]) for each of the respective projects
         """
-        if projects is None:
+        if projects_or_names is None:
             projects = self.updateable_projects()
+            configs = [self.configs[name] for name in projects]
             logger.debug("Selected all updateble projects: %s", projects)
-        configs = [self.configs[name] for name in projects]
+        elif projects_or_names and isinstance(projects_or_names[0], GithubProject):
+            configs = cast("list[GithubProject]", projects_or_names)
+            projects = [config.name for config in configs]  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            projects = cast("list[str]", projects_or_names)
+            configs = [self.configs[name] for name in projects_or_names]  # pyright: ignore[reportArgumentType]
         logger.info(
             "Fetching release info for %d projects: %s",
             len(projects),
@@ -289,3 +311,26 @@ class GithubProjectManager:
                 progress.stop_task(task)
                 progress.remove_task(task)
             save_state(self.states)
+
+    def prepare_project(self, url: str):
+        owner, repo = _split_github_url(url)
+
+        # do we already have this configuration?
+        for project in self.configs.values():
+            if project.user == owner and project.repo == repo:
+                raise ProjectExistsError(project)
+
+        # determine name
+        name = ""
+        if repo not in self.configs:
+            name = repo
+        elif f"{owner}-{repo}" not in self.configs:
+            name = f"{owner}-{repo}"
+        else:
+            for i in count(1):
+                if (name := f"{repo}{i}") not in self.configs:
+                    break
+        project = GithubProject("github", owner, repo, name=name)
+        project, assets = first(self.list_artifacts([project]))
+        state = self.states[project.name]
+        return project, state, assets

@@ -130,10 +130,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/92/88/b8527e1b00c1811db
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/25/79c98ebe12df31548ba4eaf44db11b7cad6b3e7b4203718335620939083c/caio-0.9.25-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:fb7ff95af4c31ad3f03179149aab61097a71fd85e05f89b4786de0359dffd044", size = 36983, upload-time = "2025-12-26T15:21:36.075Z" },
     { url = "https://files.pythonhosted.org/packages/a3/2b/21288691f16d479945968a0a4f2856818c1c5be56881d51d4dac9b255d26/caio-0.9.25-cp312-cp312-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:97084e4e30dfa598449d874c4d8e0c8d5ea17d2f752ef5e48e150ff9d240cd64", size = 82012, upload-time = "2025-12-26T15:22:20.983Z" },
+    { url = "https://files.pythonhosted.org/packages/03/c4/8a1b580875303500a9c12b9e0af58cb82e47f5bcf888c2457742a138273c/caio-0.9.25-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:4fa69eba47e0f041b9d4f336e2ad40740681c43e686b18b191b6c5f4c5544bfb", size = 81502, upload-time = "2026-03-04T22:08:22.381Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/1c/0fe770b8ffc8362c48134d1592d653a81a3d8748d764bec33864db36319d/caio-0.9.25-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:6bebf6f079f1341d19f7386db9b8b1f07e8cc15ae13bfdaff573371ba0575d69", size = 80200, upload-time = "2026-03-04T22:08:23.382Z" },
     { url = "https://files.pythonhosted.org/packages/31/57/5e6ff127e6f62c9f15d989560435c642144aa4210882f9494204bc892305/caio-0.9.25-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:d6c2a3411af97762a2b03840c3cec2f7f728921ff8adda53d7ea2315a8563451", size = 36979, upload-time = "2025-12-26T15:21:35.484Z" },
     { url = "https://files.pythonhosted.org/packages/a3/9f/f21af50e72117eb528c422d4276cbac11fb941b1b812b182e0a9c70d19c5/caio-0.9.25-cp313-cp313-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0998210a4d5cd5cb565b32ccfe4e53d67303f868a76f212e002a8554692870e6", size = 81900, upload-time = "2025-12-26T15:22:21.919Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/12/c39ae2a4037cb10ad5eb3578eb4d5f8c1a2575c62bba675f3406b7ef0824/caio-0.9.25-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:1a177d4777141b96f175fe2c37a3d96dec7911ed9ad5f02bac38aaa1c936611f", size = 81523, upload-time = "2026-03-04T22:08:25.187Z" },
+    { url = "https://files.pythonhosted.org/packages/22/59/f8f2e950eb4f1a5a3883e198dca514b9d475415cb6cd7b78b9213a0dd45a/caio-0.9.25-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:9ed3cfb28c0e99fec5e208c934e5c157d0866aa9c32aa4dc5e9b6034af6286b7", size = 80243, upload-time = "2026-03-04T22:08:26.449Z" },
     { url = "https://files.pythonhosted.org/packages/69/ca/a08fdc7efdcc24e6a6131a93c85be1f204d41c58f474c42b0670af8c016b/caio-0.9.25-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:fab6078b9348e883c80a5e14b382e6ad6aabbc4429ca034e76e730cf464269db", size = 36978, upload-time = "2025-12-26T15:21:41.055Z" },
     { url = "https://files.pythonhosted.org/packages/5e/6c/d4d24f65e690213c097174d26eda6831f45f4734d9d036d81790a27e7b78/caio-0.9.25-cp314-cp314-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:44a6b58e52d488c75cfaa5ecaa404b2b41cc965e6c417e03251e868ecd5b6d77", size = 81832, upload-time = "2025-12-26T15:22:22.757Z" },
+    { url = "https://files.pythonhosted.org/packages/87/a4/e534cf7d2d0e8d880e25dd61e8d921ffcfe15bd696734589826f5a2df727/caio-0.9.25-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:628a630eb7fb22381dd8e3c8ab7f59e854b9c806639811fc3f4310c6bd711d79", size = 81565, upload-time = "2026-03-04T22:08:27.483Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/ed/bf81aeac1d290017e5e5ac3e880fd56ee15e50a6d0353986799d1bc5cfd5/caio-0.9.25-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:0ba16aa605ccb174665357fc729cf500679c2d94d5f1458a6f0d5ca48f2060a7", size = 80071, upload-time = "2026-03-04T22:08:28.751Z" },
     { url = "https://files.pythonhosted.org/packages/86/93/1f76c8d1bafe3b0614e06b2195784a3765bbf7b0a067661af9e2dd47fc33/caio-0.9.25-py3-none-any.whl", hash = "sha256:06c0bb02d6b929119b1cfbe1ca403c768b2013a369e2db46bfa2a5761cf82e40", size = 19087, upload-time = "2025-12-26T15:22:00.221Z" },
 ]
 
@@ -168,6 +174,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/21/732453ae69d65d72fe37a34f8b1a455c72313b8b0a905b876da20ff7e81a/cyclopts-4.4.3.tar.gz", hash = "sha256:03797c71b49a39dcad8324d6655363056fb998e2ba0240940050331a7f63fe65", size = 159360, upload-time = "2025-12-28T18:57:03.831Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/28/03f9b8fbf396b3f2eaf65a7ff441ba2fb7dd397109d563a4e556dc5b3efb/cyclopts-4.4.3-py3-none-any.whl", hash = "sha256:951611a9d4d88d9916716ae281faca9af1cb79b88bb4f22bd0192cff54e7dec6", size = 196707, upload-time = "2025-12-28T18:57:04.884Z" },
+]
+
+[[package]]
+name = "cysystemd"
+version = "2.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/ca/2451ce4dd2e9d9d770630486bdae5dd161cf10576e0bf7443a8b33d42a2f/cysystemd-2.0.5.tar.gz", hash = "sha256:faac7506b6a709e96c0b0028bc5b3b62c3f5457b31e13e7d82b7a5f1c1889d96", size = 338663, upload-time = "2026-03-04T21:55:52.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/1e/df65cdb1ce10ca651d22a05d9c64acae092df19eeb2b3e4e5aea1f9fb3b6/cysystemd-2.0.5-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:693426351795a82d0ce6b3c6667434c25eb671bc1652dd374bbf1144d4af7aa9", size = 2255880, upload-time = "2026-03-04T21:55:35.906Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/13/24676667869d60f07364d6ec10f68eb93da04df088273332d23ca0f81679/cysystemd-2.0.5-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:764568f622392a8cbc6c692ec83ce63baca559434f850ff3e90712d9275a3a8b", size = 2389661, upload-time = "2026-03-04T21:55:37.424Z" },
+    { url = "https://files.pythonhosted.org/packages/19/98/51677d2b07e8fcec04288c0a2fd3e76d4676930a5751e1ed3927037300a4/cysystemd-2.0.5-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:9ec006a3549f1eef13f34e87bf62eb744cd0d588171c936e90d93cf3e3ac4ec3", size = 2237884, upload-time = "2026-03-04T21:55:38.782Z" },
+    { url = "https://files.pythonhosted.org/packages/99/70/91cadc7439b8ecc2c35287226ba434eb19d82f1984d437d176429629dd37/cysystemd-2.0.5-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:a8c573e6ec970b3643dfae675a904ef81aa59d78e8e9ff331896c293a4057279", size = 2369743, upload-time = "2026-03-04T21:55:40.541Z" },
+    { url = "https://files.pythonhosted.org/packages/85/bd/3eb545685d68b46e9d694e6205ee5798b7a7c9093dd4e2059a2f04e80813/cysystemd-2.0.5-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:87b474cb6a3a4c6fea5e822c4c61a3dcdd913b5255bbd1d887677db68279ed91", size = 2238626, upload-time = "2026-03-04T21:55:42.593Z" },
+    { url = "https://files.pythonhosted.org/packages/af/00/3c6419b2dc62b271e50dfcd52d2a25b83c8e47e792e49cc4c0eec8db8754/cysystemd-2.0.5-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:4597b258d7ea55ef6ff2471fbf6ac674b47432ed7b3009e061532bd2e73251d7", size = 2359646, upload-time = "2026-03-04T21:55:44.218Z" },
 ]
 
 [[package]]
@@ -265,6 +285,7 @@ dependencies = [
     { name = "pyxdg" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "systemd" },
 ]
 
 [package.dev-dependencies]
@@ -287,6 +308,7 @@ requires-dist = [
     { name = "pyxdg", specifier = ">=0.28" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=14.1.0" },
+    { name = "systemd", specifier = ">=0.17.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -705,6 +727,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/66/cdddc2d1d9a9f677520b7cfc490d234336f523d4b429c1298de359a3be08/ruff-0.12.9-py3-none-win_amd64.whl", hash = "sha256:6fb15b1977309741d7d098c8a3cb7a30bc112760a00fb6efb7abc85f00ba5908", size = 12840654, upload-time = "2025-08-14T16:08:50.158Z" },
     { url = "https://files.pythonhosted.org/packages/ac/fd/669816bc6b5b93b9586f3c1d87cd6bc05028470b3ecfebb5938252c47a35/ruff-0.12.9-py3-none-win_arm64.whl", hash = "sha256:63c8c819739d86b96d500cce885956a1a48ab056bbcbc61b747ad494b2485089", size = 11949623, upload-time = "2025-08-14T16:08:52.233Z" },
 ]
+
+[[package]]
+name = "systemd"
+version = "0.17.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cysystemd" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/c5/130c4c053315655308819fddc38e522640000ba32e2799512a15a4b2ea65/systemd-0.17.1.tar.gz", hash = "sha256:f502cca7306efcaa6bfd6a4c7d1117822e05e5abede5040d5866235c88ab7ccf", size = 1345, upload-time = "2023-06-15T10:32:30.845Z" }
 
 [[package]]
 name = "typing-extensions"

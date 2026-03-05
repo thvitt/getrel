@@ -71,3 +71,10 @@ def dec_hook(type_: type, obj: Any) -> Any:  # noqa: A002
         return Path(obj)
     else:
         raise NotImplementedError(f"Objects of type {type_} are not supported.")
+
+
+def first[T](iterable: Iterable[T], /) -> T:
+    try:
+        return next(iter(iterable))
+    except StopIteration as e:
+        raise IndexError(f"{iterable} is empty") from e

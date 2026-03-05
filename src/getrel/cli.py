@@ -1,27 +1,25 @@
 from ast import Param
-from collections.abc import Iterable
 import logging
-from multiprocessing import managers
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
-from sys import exc_info
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
-from cyclopts.annotations import AnnotatedType
 import httpx
 import xdg.BaseDirectory
-from cyclopts import App, Parameter
-from cyclopts.help import MarkdownFormatter
-from httpx import HTTPStatusError
+from cyclopts import App, Parameter, validators
+from cyclopts.group import Group
+from msgspec import yaml
 from rich import get_console
-from rich.console import Console
+from rich.console import group
 from rich.logging import RichHandler
 from rich.markdown import Markdown
-from rich.progress import DownloadColumn, MofNCompleteColumn, Progress
+from rich.progress import DownloadColumn, Progress, track
 from rich.table import Column, Table
 from rich.text import Text
 
 from getrel.actions import BinAction, ProjectState
+from getrel.add import PreferenceScores, identifying_pattern
 from getrel.config import (
     first_config_path,
     load_project_config,
@@ -38,6 +36,13 @@ logger = logging.getLogger(__name__)
 app = App()
 app.register_install_completion_command(add_to_startup=False)
 
+# Command groups
+plumbing = Group("Plumbing")
+management = Group("Management")
+infos = Group("Info")
+
+selection = Group(validator=validators.mutually_exclusive)
+
 
 @app.meta.default
 def prepare(
@@ -49,7 +54,7 @@ def prepare(
         verbose: Report what is done. Repeatable for increasing amount of debugging info.
     """
     logging.basicConfig(
-        format="%(message)s",
+        format="%(message)s (%(name)s)",
         handlers=[RichHandler(console=app.error_console)],
     )
     global_level = logging.WARNING - (verbose // 2) * 10
@@ -59,6 +64,7 @@ def prepare(
     app(tokens)
 
 
+@app.command(group=plumbing)
 def convert_old_config(
     input: Path | None = first_config_path("getrel", "projects.toml"),  # noqa: A002, B008
     /,
@@ -75,8 +81,11 @@ def convert_old_config(
     convert_file(input, output)
 
 
-@app.command
+@app.command(group=plumbing)
 def convert_old_state():
+    """
+    Convert the old getrel state to the new format.
+    """
     states: dict[str, ProjectState] = {}
     for root in xdg.BaseDirectory.load_data_paths("getrel"):
         for project in Path(root).iterdir():
@@ -102,13 +111,15 @@ def _format_binary(binary: Path):
         return Text(cmd, style="red")
 
 
-@app.command(name="list")
+@app.command(name="list", group=infos)
 def list_projects(
-    projects: list[str] | None = None,
-    new: Annotated[bool, Parameter(alias="-n", negative=False)] = False,
+    projects: Annotated[list[str] | None, Parameter(group=selection)] = None,
+    new: Annotated[
+        bool, Parameter(alias="-n", negative=False, group=selection)
+    ] = False,
 ):
     """
-    List the projects.
+    List the configured projects.
 
     Args:
         projects: only list specific projects, identified by name
@@ -182,6 +193,12 @@ def _ls_files(files: Iterable[Path], sep="\n  ") -> str:
 
 @app.command
 def check(projects: list[str] | None = None):
+    """
+    Check consistency between configuration, state and actual data on the hard disk.
+
+    Args:
+        projects: Only check specific projects.
+    """
     configs = {project.name: project for project in load_project_configs()}
     states = load_project_states()
     projects = projects or list({*configs, *states})
@@ -227,7 +244,7 @@ def check(projects: list[str] | None = None):
                     )
 
 
-@app.command
+@app.command(group=infos)
 def info(project: str, /):
     """Print information about a specific project."""
     state = load_project_states()[project]
@@ -243,7 +260,7 @@ def info(project: str, /):
     get_console().print(md)
 
 
-@app.command
+@app.command(group=management)
 def update():
     """Update all projects metadata and list the projects with updates."""
     manager = GithubProjectManager()
@@ -251,9 +268,25 @@ def update():
     list_projects([p.name for p in new])
 
 
-@app.command
-def upgrade(projects: list[str] | None = None):
+@app.command(group=management)
+def upgrade(
+    projects: Annotated[list[str] | None, Parameter(group=selection)] = None,
+    /,
+    *,
+    update: Annotated[
+        bool, Parameter(alias="-u", negative=(), group=selection)
+    ] = False,
+):
+    """
+    Upgrade the given or all updatable projects.
+
+    Args:
+        projects: If given, only update the listed projects.
+        update: Run update first, i.e., check which projects are updateable.
+    """
     manager = GithubProjectManager()
+    if update:
+        manager.look_for_new_versions()
     if projects is None:
         projects = manager.updateable_projects()
     with (
@@ -286,8 +319,59 @@ def upgrade(projects: list[str] | None = None):
                 )
 
 
-@app.command
-def install(projects: list[str] | None = None, missing: bool = False):
+@app.command(group=plumbing)
+def dump_assets(projects: list[str] | None = None):
+    """
+    Dump the information on all artefacts of the given projects to stdout.
+    """
+    manager = GithubProjectManager()
+    scorer = PreferenceScores.load()
+    result = {}
+    if projects is None:
+        projects = list(manager.configs)
+    for project, artefacts in track(manager.list_artifacts(projects), transient=True):
+        scores = [
+            {
+                "artefact": artefact,
+                "score": scorer.rate(scorer.assets, artefact, Settings.load()),
+            }
+            for artefact in artefacts
+        ]
+        scored_artfs = sorted(
+            scores,
+            key=lambda d: (d["score"], d["artefact"].downloadCount),
+            reverse=True,
+        )
+        pat = identifying_pattern(
+            [a.name for a in artefacts],
+            scored_artfs[0]["artefact"].name,
+            version=manager.states[project.name].available.version,
+        )
+        result[project.name] = {
+            "configured": project.download,
+            "generated": pat,
+            "artefacts": scored_artfs,
+        }
+    print(yaml.encode(result, enc_hook=enc_hook).decode())
+
+
+@app.command(group=management)
+def install(
+    projects: list[str] | None = None,
+    /,
+    *,
+    missing: Annotated[bool, Parameter(alias="-m", negative=())] = False,
+):
+    """
+    Install the given (or all missing) projects.
+
+    Args:
+        projects: Names of the projects to install.
+        missing: Install all projects that are configured, but not installed.
+
+    Returns:
+        1 if nothing to install
+    """
     projects = projects or []
     manager = GithubProjectManager()
     if missing:
@@ -300,9 +384,12 @@ def install(projects: list[str] | None = None, missing: bool = False):
     return upgrade(projects)
 
 
-@app.command
+@app.command(group=management)
 def uninstall(
-    projects: list[str], delete_assets: Annotated[bool, Parameter(alias="-a")] = False
+    projects: list[str],
+    /,
+    *,
+    delete_assets: Annotated[bool, Parameter(alias="-a")] = False,
 ):
     """
     Uninstall the given projects.
