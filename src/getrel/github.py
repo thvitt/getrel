@@ -7,12 +7,13 @@ from itertools import count
 from pathlib import Path
 from pprint import pformat
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from httpx import Client
 from msgspec import Struct
 from rich.progress import Progress
 
-from getrel.actions import GithubProject, Project, ProjectState, Release
+from getrel.actions import GithubProject, Project, ProjectState, Release, Settings
 from getrel.config import load_project_configs, load_project_states, save_state
 from getrel.utils import WorkingDirectory, first, split_list
 
@@ -83,6 +84,9 @@ def _split_github_url(url: str) -> tuple[str, str]:
     if not parsed.hostname or not parsed.hostname.endswith("github.com"):
         raise ValueError(f"Not a Github URL: {url}")
     parts = parsed.path.split("/")
+    if not parts[0]:
+        parts = parts[1:]
+    logger.debug("Split %s to %s", url, parts)
     return parts[0], parts[1]
 
 
@@ -108,26 +112,27 @@ class GithubProjectManager:
         Returns:
             True if the project has a new release
         """
-        config = self.configs[project]
-        if config.name not in self.states:
-            self.states[config.name] = state = ProjectState(config.name)
-            logger.debug("No known state for %s, creating one", config.name)
+        if project not in self.states:
+            self.states[project] = state = ProjectState(project)
+            logger.debug("No known state for %s, creating one", project)
         else:
-            state = self.states[config.name]
+            state = self.states[project]
         state.description = result.get("description", state.description)
         if "latestRelease" in result:
             latest_release = Release(
                 published=datetime.fromisoformat(
                     result["latestRelease"]["publishedAt"]
                 ),
-                version=result["latestRelease"].get("name")
+                version=result["latestRelease"].get("tagName")
+                or result["latestRelease"].get("name"),
+                long_version=result["latestRelease"].get("name")
                 or result["latestRelease"].get("tagName"),
                 description=result["latestRelease"].get("description"),
             )
             if state.available and latest_release > state.available:
                 logger.info(
                     "%s: New release %s (%s)",
-                    config.name,
+                    project,
                     latest_release.version,
                     latest_release.published.isoformat(),
                 )
@@ -136,14 +141,14 @@ class GithubProjectManager:
             elif state.available is None:
                 logger.info(
                     "%s: Release %s available (%s)",
-                    config.name,
+                    project,
                     latest_release.version,
                     latest_release.published.isoformat(),
                 )
                 state.available = latest_release
                 return True
         else:
-            logger.warning("%s does not have a release.", config.name)
+            logger.warning("%s does not have a release.", project)
         return False
 
     def look_for_new_versions(self, save=True):
@@ -257,13 +262,65 @@ class GithubProjectManager:
         keep: Container[Path] = [],
         delete_assets: bool = False,
     ):
-        if not isinstance(project, Project):
-            project = self.configs[project]
-        if self.installed(project):
-            project.do_uninstall(
-                self.states[project.name], keep=keep, delete_assets=delete_assets
-            )
-            save_state(self.states)
+        try:
+            if not isinstance(project, Project):
+                project = self.configs[project]
+            if self.installed(project):
+                project.do_uninstall(
+                    self.states[project.name], keep=keep, delete_assets=delete_assets
+                )
+                save_state(self.states)
+        except KeyError:
+            if isinstance(project, str) and project in self.states:
+                state = self.states[project]
+                with WorkingDirectory(state.project_dir) as pd:
+                    deleted = set()
+                    for file in reversed(state.installed_files):
+                        if (
+                            delete_assets or state._is_external(file)
+                        ) and file not in keep:
+                            if file.is_dir():
+                                file.rmdir()
+                            else:
+                                file.unlink(missing_ok=True)
+                            deleted.add(file)
+                state.installed_files = [
+                    file for file in state.installed_files if file not in deleted
+                ]
+                save_state(self.states)
+                if state.installed_files:
+                    logger.warning(
+                        "For %s, no configuration was found. %d files outside of the project directory %s have been removed, "
+                        "%d files remain in the project directory. Rerun with --delete-assets to remove them, as well.",
+                        project,
+                        pd,
+                        len(deleted),
+                        len(state.installed_files),
+                    )
+                else:
+                    logger.warning(
+                        "For %s, no configuration was found. All %d files have been removed, "
+                        "the project directory %s and the state will be cleared as well.",
+                        project,
+                        len(deleted),
+                        pd,
+                    )
+                    pd.directory.rmdir()
+                    del self.states[project]
+                    save_state(self.states)
+            else:
+                logger.error("Unknown project: %s", project)
+
+    def delete_config(self, project: GithubProject | str):
+        if isinstance(project, str):
+            if project in self.configs:
+                project = self.configs[project]
+            else:
+                logger.error("No project configuration for project %s", project)
+                return
+        assert isinstance(project, GithubProject)
+        project.project_file.unlink(missing_ok=True)
+        del self.configs[project.name]
 
     def install_or_update(self, project: GithubProject, assets: Container[Path]):
         if self.installed(project):
@@ -282,13 +339,17 @@ class GithubProjectManager:
             selected_assets = [
                 asset
                 for asset in assets
-                if any(fnmatch(asset.name, pat) for pat in project.download)
+                if any(
+                    fnmatch(asset.name, expanded_pat)
+                    for pat in project.download
+                    for expanded_pat in Settings.load().expand_arch(pat)
+                )
             ]
             logger.info(
                 "%s: %d of %d artefacts: %s",
                 project.name,
                 len(selected_assets),
-                len(assets),
+                len(list(assets)),
                 ", ".join(a.name for a in selected_assets),
             )
             for asset in selected_assets:
@@ -300,7 +361,7 @@ class GithubProjectManager:
                     ) as resp,
                     asset_path.open("wb") as file,
                 ):
-                    for chunk in resp.iter_bytes():  # noqa: FURB122
+                    for chunk in resp.iter_bytes():
                         file.write(chunk)
                         progress.advance(task, len(chunk))
                 if state.installed_files is None:

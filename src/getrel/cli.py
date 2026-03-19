@@ -1,8 +1,8 @@
-from ast import Param
 import logging
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
+from textwrap import indent
 from typing import Annotated
 
 import httpx
@@ -11,15 +11,16 @@ from cyclopts import App, Parameter, validators
 from cyclopts.group import Group
 from msgspec import yaml
 from rich import get_console
-from rich.console import group
 from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.progress import DownloadColumn, Progress, track
 from rich.table import Column, Table
 from rich.text import Text
+from rich.traceback import install as install_rich_traceback
 
 from getrel.actions import BinAction, ProjectState
 from getrel.add import PreferenceScores, identifying_pattern
+from getrel.add import add as add_
 from getrel.config import (
     first_config_path,
     load_project_config,
@@ -33,7 +34,7 @@ from getrel.utils import WorkingDirectory, enc_hook
 
 logger = logging.getLogger(__name__)
 
-app = App()
+app = App(verbose=True)
 app.register_install_completion_command(add_to_startup=False)
 
 # Command groups
@@ -53,14 +54,21 @@ def prepare(
     Args:
         verbose: Report what is done. Repeatable for increasing amount of debugging info.
     """
-    logging.basicConfig(
-        format="%(message)s (%(name)s)",
-        handlers=[RichHandler(console=app.error_console)],
-    )
     global_level = logging.WARNING - (verbose // 2) * 10
     local_level = logging.WARNING - ((verbose + 1) // 2 * 10)
+    logging.basicConfig(
+        format="%(message)s (%(name)s)",
+        handlers=[
+            RichHandler(
+                console=app.error_console, rich_tracebacks=local_level <= logging.DEBUG
+            )
+        ],
+    )
+    if local_level <= logging.DEBUG:
+        install_rich_traceback(console=app.error_console, suppress=["cyclopts"])
     logging.getLogger().setLevel(global_level)
     logging.getLogger("getrel").setLevel(local_level)
+
     app(tokens)
 
 
@@ -128,7 +136,7 @@ def list_projects(
     configs = {project.name: project for project in load_project_configs()}
     states = load_project_states()
     if projects is None:
-        projects = list({*configs, *states})
+        projects = list(configs)  # list({*configs, *states})
     table = Table(
         Column("Name", style="bold"),
         "Version ([green]update[/green], [red]not installed[/red])",
@@ -390,6 +398,7 @@ def uninstall(
     /,
     *,
     delete_assets: Annotated[bool, Parameter(alias="-a")] = False,
+    delete_config: Annotated[bool, Parameter(alias="-c")] = False,
 ):
     """
     Uninstall the given projects.
@@ -401,3 +410,10 @@ def uninstall(
     manager = GithubProjectManager()
     for project in projects:
         manager.uninstall(project, delete_assets=delete_assets)
+        if delete_config:
+            manager.delete_config(project)
+
+
+@app.command(group=management)
+def add(url: str, /):
+    add_(url)

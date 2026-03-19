@@ -7,8 +7,11 @@ import tarfile
 from abc import abstractmethod
 from datetime import datetime
 from fnmatch import fnmatch
+from functools import lru_cache
 from os import fspath
+from os.path import expandvars
 from pathlib import Path
+from platform import machine
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
@@ -19,7 +22,7 @@ import msgspec
 import xdg.BaseDirectory
 from logproc import execute
 
-from getrel.utils import WorkingDirectory, expand
+from getrel.utils import WorkingDirectory, field_names, first, unique
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Container, Iterable
@@ -81,18 +84,32 @@ class BaseAction(
         Args:
             candidates: Optional list of paths or strings to filter against the pattern.
         """  # noqa: RUF002
-        if candidates is None:
-            path = expand(self.source)
-            if path.is_absolute():
-                return path.parent.glob(path.name)
+        result = []
+        for path in Settings.load().expand(self.source):
+            if candidates is None:
+                if path.is_absolute():
+                    result.extend(path.parent.glob(path.name))
+                    logger.debug(" ... abs: %s ~> %s", path, result)
+                else:
+                    result.extend(Path().glob(fspath(path)))
+                    logger.debug(" ... rel: %s ~> %s", path, result)
             else:
-                return Path().glob(self.source)
-        else:
-            return [path for path in candidates if fnmatch(str(path), self.source)]
+                result.extend(
+                    cand for cand in candidates if fnmatch(str(cand), str(path))
+                )
+        return unique(result)
 
     @property
     def sources(self) -> list[Path]:
-        return list(self.expand_source())
+        result = list(self.expand_source())
+        logger.debug(
+            "%s: sources %s ~> %s (in %s)",
+            self.__class__.__name__,
+            self.source,
+            result,
+            Path().absolute(),
+        )
+        return result
 
 
 class UnpackAction(BaseAction):
@@ -133,9 +150,11 @@ class UnpackAction(BaseAction):
                         and not (name.startswith("/") or name.startswith("../"))
                     ]
                     archive.extractall(self.destination, members)
-                    dest = expand(self.destination or Path.cwd())
+                    dests = Settings.load().expand(self.destination or Path.cwd())
                     project_files.extend(
-                        dest.joinpath(member).absolute() for member in members
+                        dest.joinpath(member).absolute()
+                        for member in members
+                        for dest in dests
                     )
             except BadZipFile as zip_error:
                 try:
@@ -161,7 +180,7 @@ class AbstractLinkAction(BaseAction):
                 "link is missing for link action with source pattern %s: Do not know where to link to.",
                 self.source,
             )
-        link = expand(self.link)
+        link = first(Settings.load().expand(self.link))
         if self.link.endswith("/") or link.is_dir() or self.dir:
             link_dir = link
         else:
@@ -255,7 +274,7 @@ class BinAction(AbstractLinkAction):
         if self.link is None:
             self.link = "~/.local/bin/"
         link_dir = self._prepare_linkdir(project_files)
-        bin_ = None if self.bin is None else expand(self.bin)
+        bin_ = None if self.bin is None else first(Settings.load().expand(self.bin))
         for source in self.sources:
             source.chmod(source.stat().st_mode | S_IXUSR | S_IXGRP | S_IXOTH)
             if bin_ is None:
@@ -320,6 +339,8 @@ Action = UnpackAction | BinAction | LinkAction | ScriptAction
 
 
 class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
+    """A project configuration."""
+
     name: str
     install: list[Action] = []
     uninstall: list[Action] = []
@@ -327,6 +348,12 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
 
     @classmethod
     def load(cls, src: str | Path) -> Self:
+        """
+        Loads a project configuration from a YAML file.
+
+        Args:
+            src: The project name as a string to load from a configuration file in a standard location, or a file Path
+        """
         if not isinstance(src, Path):
             config_file = xdg.BaseDirectory.load_first_config(
                 "getrel", "projects", src + ".yaml"
@@ -336,18 +363,61 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         result.configured = datetime.fromtimestamp(src.stat().st_mtime)  # pyright: ignore[reportAttributeAccessIssue]
         return result
 
+    @property
+    def project_file(self) -> Path:
+        return Path(
+            xdg.BaseDirectory.load_first_config(
+                "getrel", "projects", self.name + ".yaml"
+            )
+        )
+
+    def save(self) -> bytes:
+        """
+        Save the configuration to a file in the default project location.
+
+        Returns:
+            serialized YAML representation as written to the file.
+        """
+        config_file = Path(
+            xdg.BaseDirectory.save_config_path("getrel", "projects"),
+            self.name + ".yaml",
+        )
+        serialized = msgspec.yaml.encode(self)
+        config_file.write_bytes(serialized)
+        return serialized
+
     def do_install(self, state: ProjectState):
+        """
+        Run all configured install actions.
+        """
         with WorkingDirectory(state.project_dir):
             for action in self.install:
                 action(state.installed_files)
 
     def is_asset(self, file: str | Path) -> bool:
+        """
+        Returns True iff the given path points to an asset.
+
+        An asset is a file directly downloaded from the project site, not created
+        by an action.
+        """
         file_ = str(file)
         return any(fnmatch(file_, pattern) for pattern in self.download)
 
     def do_uninstall(
         self, state: ProjectState, delete_assets=False, keep: Container[Path] = []
     ):
+        """
+        Uninstalls the given project.
+
+        This first runs all configured uninstall actions, if any, and then removes all
+        remaining files.
+
+        Args:
+            state: The current project state. Will be updated.
+            delete_assets: If True, also delete downloaded assets.
+            keep: Paths to files that should not be deleted.
+        """
         with WorkingDirectory(state.project_dir):
             for action in self.uninstall:
                 action(state.installed_files)
@@ -385,6 +455,7 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
 class Release(msgspec.Struct, omit_defaults=True):
     published: datetime
     version: str | None = None
+    long_version: str | None = None
     description: str | None = None
 
     def __lt__(self, value: object, /) -> bool:
@@ -449,6 +520,32 @@ class GithubProject(Project, omit_defaults=True):
     @property
     def url(self):
         return f"https://github.com/{self.user}/{self.repo}"
+
+
+class Settings(msgspec.Struct, omit_defaults=True):
+    architectures: dict[str, list[str]] = {}
+
+    def expand_arch(self, pattern: str) -> Iterable[str]:
+        if "arch" not in field_names(pattern):
+            return (pattern,)
+
+        arch = machine()
+        return unique(
+            pattern.format(arch=replacement)
+            for replacement in [arch, *self.architectures.get(arch, [])]
+        )
+
+    def expand(self, src: str | Path) -> Iterable[Path]:
+        return [Path(expandvars(p)).expanduser() for p in self.expand_arch(fspath(src))]
+
+    @classmethod
+    @lru_cache(1)
+    def load(cls) -> Self:
+        config_file_ = xdg.BaseDirectory.load_first_config("getrel", "settings.yaml")
+        if config_file_ and (config_file := Path(config_file_)).exists():
+            return msgspec.yaml.decode(config_file.read_bytes(), type=cls)
+        else:
+            return cls()
 
 
 if __name__ == "__main__":

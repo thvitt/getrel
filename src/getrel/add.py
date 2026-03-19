@@ -1,10 +1,13 @@
 import fnmatch
 import logging
+import os
 import re
 from collections.abc import Callable, Iterable
 from difflib import SequenceMatcher
 from importlib.resources import read_binary
 from itertools import chain
+from pathlib import Path
+from platform import machine
 from typing import Literal, Self
 
 import msgspec
@@ -12,8 +15,10 @@ from httpx import Client
 from msgspec import Struct
 from rich.progress import Progress
 
+from getrel.actions import BinAction, LinkAction, Settings, UnpackAction
+from getrel.config import save_state
 from getrel.github import Asset, GithubProjectManager
-from getrel.utils import WorkingDirectory, first
+from getrel.utils import WorkingDirectory, field_names, first, unique
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +38,11 @@ class Relevance(Struct, omit_defaults=True):
     name: str = ""
     mime: str = ""
 
-    def rate(self, asset: Asset):
-        if self.name and not fnmatch.fnmatch(asset.name, self.name):
-            return 0
+    def rate(self, asset: Asset, settings: Settings):
+        if self.name:
+            patterns = settings.expand_arch(self.name)
+            if not any(fnmatch.fnmatch(asset.name, p) for p in patterns):
+                return 0
         if self.mime and not fnmatch.fnmatch(asset.contentType, self.mime):
             return 0
         if self.name or self.mime:
@@ -50,8 +57,8 @@ class PreferenceScores(Struct, omit_defaults=True):
     def load(cls) -> Self:
         return msgspec.yaml.decode(read_binary(__name__, "scores.yaml"), type=cls)
 
-    def rate(self, rules: list[Relevance], what: Asset) -> float:
-        return sum(rule.rate(what) for rule in rules)
+    def rate(self, rules: list[Relevance], what: Asset, settings: Settings) -> float:
+        return sum(rule.rate(what, settings) for rule in rules)
 
 
 class ScoredAsset(Struct):
@@ -59,8 +66,12 @@ class ScoredAsset(Struct):
     score: float
 
     @classmethod
-    def score_assets(cls, assets: Iterable[Asset], scorer: PreferenceScores):
-        scores = [cls(asset, scorer.rate(scorer.assets, asset)) for asset in assets]
+    def score_assets(
+        cls, assets: Iterable[Asset], scorer: PreferenceScores, settings: Settings
+    ):
+        scores = [
+            cls(asset, scorer.rate(scorer.assets, asset, settings)) for asset in assets
+        ]
         return sorted(
             scores, key=lambda a: (a.score, a.asset.downloadCount), reverse=True
         )
@@ -82,6 +93,7 @@ def identifying_pattern(
     alternatives: list[str],
     selection: str,
     version: str | None = None,
+    settings: Settings | None = None,
     avoid_minimal=False,
 ) -> str:
     """
@@ -99,17 +111,22 @@ def identifying_pattern(
         A pattern is valid if it matches the selection but not any of the alternatives.
         """
         try:
-            if not fnmatch.fnmatch(selection, pattern):
+            patterns = [pattern]
+            if settings:
+                patterns = list(settings.expand_arch(pattern))
+
+            if not any(fnmatch.fnmatch(selection, p) for p in patterns):
                 raise NoPatternError(
                     f'Could not generate a match pattern. The candidate, "{pattern}", does not match "{selection}".'
                 )
-            matching_alternatives = fnmatch.filter(alternatives, pattern)
-            if matching_alternatives:
-                raise NoPatternError(
-                    f'Could not generate a match pattern. The candidate, "{pattern}", matches {len(matching_alternatives)} alternatives: {matching_alternatives}'
-                )
+            for p in patterns:
+                matching_alternatives = fnmatch.filter(alternatives, p)
+                if matching_alternatives:
+                    raise NoPatternError(
+                        f'Could not generate a match pattern. The candidate, "{pattern}" (as "{p}"), matches {len(matching_alternatives)} alternatives: {matching_alternatives}'
+                    )
             logger.debug(
-                "Pattern %s for selection %s, alternatives %s",
+                "Pattern %s matches selection %s, but not alternatives %s",
                 pattern,
                 selection,
                 alternatives,
@@ -122,22 +139,14 @@ def identifying_pattern(
             else:
                 return False
 
+    pattern = selection
     if version:
-        versionless = mask_version(selection, version)
-        if check_pattern(versionless, exception=False):
-            return versionless
+        pattern = mask_version(pattern, version)
+    if settings:
+        pattern = mask_architecture(pattern, settings)
 
-    # try some typical constructions
-    #     path = Path(selection)
-    #     dir_star = str(Path('*', path.name))
-    #     if check_pattern(dir_star):
-    #         return dir_star
-    #     name_star = str(path.with_name('*'))
-    #     if check_pattern(name_star):
-    #         return name_star
-    #     stem_star = str(path.with_stem('*'))
-    #     if stem_star != name_star and check_pattern(stem_star):
-    #         return stem_star
+    if pattern != selection and check_pattern(pattern, exception=False):
+        return pattern
 
     if not avoid_minimal:
         # try minimal substrings
@@ -145,7 +154,7 @@ def identifying_pattern(
         if substring:
             pos = selection.index(substring)
             result = ""
-            if pos == 0:
+            if pos != 0:
                 result += "*"
             result += substring
             if pos + len(substring) < len(selection):
@@ -174,6 +183,10 @@ def identifying_pattern(
     pattern = "".join(pattern_parts)
 
     # assert correctness
+    if version:
+        pattern = mask_version(pattern, version)
+    if settings:
+        pattern = mask_architecture(pattern, settings)
 
     return pattern
 
@@ -214,18 +227,29 @@ def mask_version(name, version):
     return versionless
 
 
+def mask_architecture(name: str, settings: Settings) -> str:
+    arch = machine()
+    aliases = [arch, *settings.architectures.get(arch, [])]
+    for a in sorted(aliases, key=len, reverse=True):
+        name = name.replace(a, "{arch}")
+    return name
+
+
 def add(url: str, auto_level: Literal[0, 1, 2] = 0):
     scorer = PreferenceScores.load()
+    settings = Settings.load()
     manager = GithubProjectManager()
     project, state, assets_ = manager.prepare_project(url)
-    assets = ScoredAsset.score_assets(assets_, scorer)
+    logger.debug("Project: %s, State: %s, Assets: %s", project, state, assets_)
+    assets = ScoredAsset.score_assets(assets_, scorer, settings)
     top = _top_scored(assets, key=lambda s: s.score)
-    # TODO: Interactivity
+    logger.debug("Top assets: %s", top)
     project.download = [
         identifying_pattern(
-            [a.asset.name for a in assets],
+            [a.asset.name for a in top],
             assets[0].asset.name,
             state.available.version if state.available else None,
+            settings=settings,
         )
     ]
     with (
@@ -234,8 +258,78 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0):
         Progress() as progress,
     ):
         file_idx = len(state.installed_files)
-        manager.download(project, assets_, client, progress)
+        downloaded_files = list(manager.download(project, assets_, client, progress))
+        logger.debug(
+            "Downloaded files: %s, from asset list: %s", downloaded_files, assets_
+        )
 
-        # Here are the rules:
-        # - archives -> unpackaction
-        # -
+        new_files = list(downloaded_files)
+        binary_limit = 5
+        binary_count = 0
+
+        while new_files:
+            current_files = new_files
+            new_files = []
+
+            for file in current_files:
+                action = None
+                file_path = Path(file)
+                try:
+                    rel_path = file_path.relative_to(Path.cwd())
+                except ValueError:
+                    rel_path = file_path
+
+                logger.debug("Analyzing %s ...", rel_path)
+
+                if file_path.name.endswith(
+                    (
+                        ".zip",
+                        ".tar.gz",
+                        ".tgz",
+                        ".tar.xz",
+                        ".txz",
+                        ".tar.bz2",
+                        ".tbz",
+                        ".tar",
+                    )
+                ):
+                    action = UnpackAction(source=str(rel_path))
+                elif file_path.name.startswith("_") or "completions" in rel_path.parts:
+                    action = LinkAction(source=str(rel_path), link="~/.zsh/completions")
+                elif file_path.name.endswith(".1"):
+                    action = LinkAction(source=str(rel_path), link="~/.local/man/man1")
+                elif os.access(file_path, os.X_OK) and not file_path.is_dir():
+                    if binary_count < binary_limit:
+                        action = BinAction(source=str(rel_path))
+                        binary_count += 1
+                    else:
+                        logger.warning(
+                            "Sanity limit reached: skipping BinAction for %s",
+                            file_path.name,
+                        )
+
+                if action:
+                    if state.available and state.available.version:
+                        action.source = mask_version(
+                            action.source, state.available.version
+                        )
+                    action.source = mask_architecture(action.source, settings)
+                    logger.debug("Added %s for %s", action, file)
+                    project.install.append(action)
+                    action_created_files = []  # FIXME should pass list of all files
+                    action(action_created_files)
+                    logger.debug("… created files: %s", action_created_files)
+
+                    if state.installed_files is None:
+                        state.installed_files = []
+
+                    for new_f in action_created_files:
+                        state.installed_files.append(new_f)
+                        if new_f.is_relative_to(Path.cwd()):
+                            new_files.append(new_f)
+                else:
+                    logger.debug("No suitable action for %s", file)
+            config_yaml = project.save()
+            logger.info("Final project config:\n%s", config_yaml.decode())
+            logger.debug("Final project state: %s", state)
+            save_state(manager.states)

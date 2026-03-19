@@ -1,12 +1,19 @@
 from collections.abc import Callable, Iterable, Mapping
 from os import chdir
-from os.path import expandvars
 from pathlib import Path
+from string import Formatter
 from typing import Any
 
 
-def expand(src: str | Path) -> Path:
-    return Path(expandvars(src)).expanduser()
+def field_names(pattern: str) -> set[str]:
+    """
+    Extracts all field names in the given format string.
+    """
+    return {
+        field
+        for (_literal, field, _format, _conversion) in Formatter().parse(pattern)
+        if field is not None
+    }
 
 
 class WorkingDirectory:
@@ -27,6 +34,9 @@ class WorkingDirectory:
         assert self.previous is not None
         chdir(self.previous)
         return False
+
+    def __str__(self):
+        return str(self.directory)
 
 
 def split_list[T](
@@ -78,3 +88,11 @@ def first[T](iterable: Iterable[T], /) -> T:
         return next(iter(iterable))
     except StopIteration as e:
         raise IndexError(f"{iterable} is empty") from e
+
+
+def unique[T](iterable: Iterable[T], /) -> Iterable[T]:
+    seen = set()
+    for item in iterable:
+        if item not in seen:
+            yield item
+            seen.add(item)
