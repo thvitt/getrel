@@ -1,8 +1,13 @@
+import stat
 from collections.abc import Callable, Iterable, Mapping
 from os import chdir
 from pathlib import Path
 from string import Formatter
+from tarfile import is_tarfile
 from typing import Any
+from zipfile import is_zipfile
+
+import magic
 
 
 def field_names(pattern: str) -> set[str]:
@@ -76,7 +81,7 @@ def enc_hook(obj: Any) -> Any:
         raise NotImplementedError(f"Objects of type {type(obj)} are not supported.")
 
 
-def dec_hook(type_: type, obj: Any) -> Any:  # noqa: A002
+def dec_hook(type_: type, obj: Any) -> Any:
     if type_ is Path:
         return Path(obj)
     else:
@@ -96,3 +101,61 @@ def unique[T](iterable: Iterable[T], /) -> Iterable[T]:
         if item not in seen:
             yield item
             seen.add(item)
+
+
+class FileType:
+    """
+    Tries to detect the filetype of the given file (which may be a string or
+    path). It will use libmagic if available.
+
+    Properties:
+        file: Path of the file
+        mime: detected MIME type (or None, if it could not be detected)
+        description: textual form of the type
+        executable: if True, we guess it’s some kind of executable file
+        archive: if True, its an archive we can unpack
+    """
+
+    file: Path
+    mime: str | None
+    description: str
+    executable: bool = False
+    archive: bool = False
+
+    def __init__(self, file: Path | str):
+        if not isinstance(file, Path):
+            file = Path(file)
+        self.file = file
+        if file.is_dir():
+            self.mime = "inode/directory"
+            self.description = "Directory"
+            return
+        else:
+            self.mime = magic.from_file(file, mime=True)
+            self.description = magic.from_file(file) or "unknown"
+
+        if (
+            file.is_file()
+            and file.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        ) or (
+            self.mime is not None
+            and ("executable" in self.mime or "script" in self.mime)
+        ):
+            self.executable = True
+        elif is_tarfile(file) or is_zipfile(file):
+            self.archive = True
+        elif file.is_file():
+            with file.open(errors="ignore") as f:
+                if f.read(2) == "#!":
+                    self.executable = True
+
+    def __str__(self):
+        result = self.mime or ""
+        app = []
+        if self.executable:
+            app.append("executable")
+        if self.archive:
+            app.append("archive")
+        if app:
+            result += f" ({' '.join(app)})"
+        return result

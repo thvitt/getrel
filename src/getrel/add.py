@@ -18,7 +18,7 @@ from rich.progress import Progress
 from getrel.actions import BinAction, LinkAction, Settings, UnpackAction
 from getrel.config import save_state
 from getrel.github import Asset, GithubProjectManager
-from getrel.utils import WorkingDirectory, field_names, first, unique
+from getrel.utils import FileType, WorkingDirectory, field_names, first, unique
 
 logger = logging.getLogger(__name__)
 
@@ -280,25 +280,14 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0):
                     rel_path = file_path
 
                 logger.debug("Analyzing %s ...", rel_path)
-
-                if file_path.name.endswith(
-                    (
-                        ".zip",
-                        ".tar.gz",
-                        ".tgz",
-                        ".tar.xz",
-                        ".txz",
-                        ".tar.bz2",
-                        ".tbz",
-                        ".tar",
-                    )
-                ):
+                filetype = FileType(rel_path)
+                if filetype.archive:
                     action = UnpackAction(source=str(rel_path))
                 elif file_path.name.startswith("_") or "completions" in rel_path.parts:
                     action = LinkAction(source=str(rel_path), link="~/.zsh/completions")
                 elif file_path.name.endswith(".1"):
                     action = LinkAction(source=str(rel_path), link="~/.local/man/man1")
-                elif os.access(file_path, os.X_OK) and not file_path.is_dir():
+                elif filetype.executable:
                     if binary_count < binary_limit:
                         action = BinAction(source=str(rel_path))
                         binary_count += 1
