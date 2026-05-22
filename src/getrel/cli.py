@@ -38,7 +38,7 @@ from getrel.utils import WorkingDirectory, enc_hook
 
 logger = logging.getLogger(__name__)
 
-app = App(verbose=True)
+app = App(verbose=False)
 app.register_install_completion_command(add_to_startup=False)
 
 # Command groups
@@ -532,3 +532,15 @@ def remove(projects: list[str], /):
 def save_schemas():
     """Save the JSON schemas for the configuration files to the settings directory."""
     write_schemas()
+
+
+@app.command(group=management)
+def add(url: str, prerelease: Annotated[bool, Parameter(alias="-p")] = False):
+    """
+    Add a new project. Work in progress, you might want to use edit afterwards.
+
+    Args:
+        url: URL to the project
+        prerelease: if true, consider prereleases
+    """
+    add_(url, prerelease=prerelease)
