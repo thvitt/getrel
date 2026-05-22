@@ -38,7 +38,7 @@ def test_expand_abs(tmp_path):
         "archive.tar.bz2",
         "archive.tar.gz",
         "archive.tar.xz",
-        # "archive.tar.zst",
+        "archive.tar.zst",
         "archive.zip",
     ],
 )

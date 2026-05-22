@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import subprocess
 import tarfile
 from abc import abstractmethod
 from datetime import datetime
@@ -164,6 +165,19 @@ class UnpackAction(BaseAction):
                             filter=self._make_record_tar_filter(project_files),
                         )
                 except tarfile.ReadError as tar_error:
+                    if source.suffix == ".zst" or source.name.endswith(".tar.zst"):
+                        try:
+                            with (
+                                subprocess.Popen(["zstd", "-dc", fspath(source)], stdout=subprocess.PIPE) as proc,
+                                tarfile.open(fileobj=proc.stdout, mode="r|") as archive,
+                            ):
+                                    archive.extractall(
+                                        fspath(self.destination or "."),
+                                        filter=self._make_record_tar_filter(project_files),
+                                    )
+                            continue
+                        except Exception as zstd_error:
+                             logger.error("Failed to unpack %s with zstd: %s", source, zstd_error)
                     logger.error(
                         "Failed to unpack %s: %s and %s", source, zip_error, tar_error
                     )

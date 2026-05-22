@@ -142,7 +142,7 @@ class FileType:
             and ("executable" in self.mime or "script" in self.mime)
         ):
             self.executable = True
-        elif is_tarfile(file) or is_zipfile(file):
+        elif is_tarfile(file) or is_zipfile(file) or str(file).endswith(".zst"):
             self.archive = True
         elif file.is_file():
             with file.open(errors="ignore") as f:
