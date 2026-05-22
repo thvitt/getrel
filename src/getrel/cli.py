@@ -1,5 +1,8 @@
 import logging
+import os
+import shlex
 import shutil
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 from textwrap import indent
@@ -11,6 +14,7 @@ from cyclopts import App, Parameter, validators
 from cyclopts.group import Group
 from msgspec import yaml
 from rich import get_console
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.progress import DownloadColumn, Progress, track
@@ -18,7 +22,7 @@ from rich.table import Column, Table
 from rich.text import Text
 from rich.traceback import install as install_rich_traceback
 
-from getrel.actions import BinAction, ProjectState
+from getrel.actions import BinAction, ProjectState, Settings, write_schemas
 from getrel.add import PreferenceScores, identifying_pattern
 from getrel.add import add as add_
 from getrel.config import (
@@ -257,15 +261,97 @@ def info(project: str, /):
     """Print information about a specific project."""
     state = load_project_states()[project]
     config = load_project_config(project)
-    md = Table.grid(padding=1)
+    md = Table(show_header=False, show_edge=False, highlight=True)
+
     md.add_row(project, state.description, style="bold")
-    md.add_section()
     md.add_row("URL", config.url)
     md.add_row("Download", ", ".join(config.download))
-    md.add_section()
+    _install = "\n".join(f"* {action}" for action in config.install)
+    if _install:
+        md.add_row("Install", Markdown(_install))
+    _uninstall = "\n".join(f" {action}" for action in config.uninstall)
+    if _uninstall:
+        md.add_row("Uninstall", Markdown(_uninstall))
     if state.available:
         md.add_row("Release Notes", Markdown(state.available.description or ""))
     get_console().print(md)
+
+
+def capture(*objects, **kwargs) -> str:
+    console = Console(force_terminal=False, force_interactive=False, record=True)
+    console.begin_capture()
+    console.print(*objects, **kwargs)
+    return console.end_capture()
+
+
+@app.command(group=infos)
+def ls(project):
+    """Summarize the installed files of the given project."""
+    states = load_project_states()
+    if project in states:
+        config = load_project_config(project)
+        summary = states[project].summarize_directory(config)
+        get_console().print(summary)
+    else:
+        logger.error("Project %s is not installed", project)
+
+
+@app.command(group=management)
+def edit(project: str):
+    """
+    Edit the configuration of the given project.
+    """
+    if project == "settings":
+        config_path = (
+            Path(xdg.BaseDirectory.save_config_path("getrel")) / "settings.yaml"
+        )
+        schema_filename = "getrel-settings.schema.json"
+        config = None
+    else:
+        config = load_project_config(project)
+        config_path = config.project_file
+        schema_filename = "getrel-project.schema.json"
+
+    if not (config_path.parent / schema_filename).exists():
+        save_schemas()
+
+    content = config_path.read_text() if config_path.exists() else ""
+    schema_comment = f"# yaml-language-server: $schema={schema_filename}"
+    if not content.startswith(schema_comment):
+        if content.startswith("# yaml-language-server:"):
+            lines = content.splitlines()
+            lines[0] = schema_comment
+            content = "\n".join(lines) + ("\n" if lines else "")
+        else:
+            content = schema_comment + "\n" + content
+        config_path.write_text(content)
+
+    states = load_project_states()
+    if config and project in states:
+        summary_tree = states[project].summarize_directory(config)
+        summary_text = capture(summary_tree)
+        commented_summary = indent(summary_text, "# ").rstrip()
+
+        content = config_path.read_text()
+        lines = content.splitlines()
+
+        summary_header = f"# {project} ("
+        start_index = -1
+        for i, line in enumerate(lines):
+            if line.startswith(summary_header) and line.endswith(")"):
+                start_index = i
+                break
+
+        new_lines = lines[:start_index] if start_index != -1 else lines
+
+        while new_lines and not new_lines[-1].strip():
+            new_lines.pop()
+
+        new_content = "\n".join(new_lines) + "\n\n" + commented_summary + "\n"
+        config_path.write_text(new_content)
+
+    editor = os.environ.get("EDITOR", "vi") or "vi"
+    subprocess.call([*shlex.split(editor), str(config_path)])
 
 
 @app.command(group=management)

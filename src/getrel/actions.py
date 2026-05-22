@@ -23,8 +23,10 @@ from zipfile import BadZipFile, ZipFile
 import msgspec
 import xdg.BaseDirectory
 from logproc import execute
+from rich.text import Text
+from rich.tree import Tree
 
-from getrel.utils import WorkingDirectory, field_names, first, unique
+from getrel.utils import FileType, WorkingDirectory, field_names, first, unique
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Container, Iterable
@@ -572,6 +574,84 @@ class ProjectState(msgspec.Struct, omit_defaults=True):
     @property
     def project_dir(self):
         return DATA_DIR / self.name
+
+    def sanitize_files(self):
+        self.installed_files = list(
+            unique(
+                f.relative_to(self.project_dir)
+                if f.is_relative_to(self.project_dir)
+                else f
+                for f in self.installed_files
+            )
+        )
+
+    def summarize_directory(
+        self, project: Project, max_depth: int = 3, max_siblings: int = 15
+    ):
+        """
+        Summarizes the contents of the project directory.
+
+        It returns a rich.tree.Tree of files and directories. Both the tree depth and
+        the number of siblings are shortened in case of large directories.
+        For each file, there is an indicator of the FileType, and if it matches the
+        source pattern of any config rule, that pattern is indicated as well.
+        """
+        project_dir = self.project_dir
+        if not project_dir.exists():
+            return Text(f"Project directory {project_dir} does not exist.")
+
+        tree = Tree(f"[bold]{project.name}[/bold] ({project_dir})")
+
+        settings = Settings.load()
+        action_patterns = []
+        for pattern in project.download:
+            action_patterns.extend(settings.expand_arch(pattern))
+        for action in project.install:
+            action_patterns.extend(settings.expand_arch(action.source))
+        action_patterns = list(unique(action_patterns))
+
+        def add_to_tree(node: Tree, current_abs_path: Path, depth: int):
+            if depth > max_depth:
+                node.add("[dim]...[/dim]")
+                return
+
+            try:
+                items = sorted(
+                    current_abs_path.iterdir(), key=lambda p: (not p.is_dir(), p.name)
+                )
+            except OSError:
+                return
+
+            if len(items) > max_siblings:
+                shown_items = items[:max_siblings]
+                remaining = len(items) - max_siblings
+            else:
+                shown_items = items
+                remaining = 0
+
+            for item in shown_items:
+                rel_path = item.relative_to(project_dir)
+
+                label = Text(item.name)
+                if item.is_dir():
+                    label.stylize("bold blue")
+                    branch = node.add(label)
+                    add_to_tree(branch, item, depth + 1)
+                else:
+                    file_type = FileType(item)
+                    label.append(f" ({file_type})", style="dim")
+
+                    matches = [p for p in action_patterns if fnmatch(str(rel_path), p)]
+                    if matches:
+                        label.append(f" [match: {', '.join(matches)}]", style="green")
+
+                    node.add(label)
+
+            if remaining > 0:
+                node.add(f"[dim]... ({remaining} more items)[/dim]")
+
+        add_to_tree(tree, project_dir, 1)
+        return tree
 
 
 class GithubProject(Project, omit_defaults=True):

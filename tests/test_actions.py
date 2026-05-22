@@ -1,9 +1,19 @@
+import zipfile
 from pathlib import Path
 
 import pytest
 from more_itertools import first
+from rich.console import Console
 
-from getrel.actions import BaseAction, ScriptAction, UnpackAction
+import getrel.actions
+from getrel.actions import (
+    BaseAction,
+    BinAction,
+    Project,
+    ProjectState,
+    ScriptAction,
+    UnpackAction,
+)
 from getrel.utils import WorkingDirectory
 
 
@@ -78,3 +88,63 @@ print("foo")
         )
         action(files)
     assert files == [Path("foo")]
+
+
+def test_summarize_directory(tmp_path, monkeypatch):
+    # Mock DATA_DIR to use our tmp_path
+    monkeypatch.setattr(getrel.actions, "DATA_DIR", tmp_path)
+
+    project_name = "test_project"
+    project_dir = tmp_path / project_name
+    project_dir.mkdir(parents=True)
+
+    # Create some files
+    zip_path = project_dir / "tool.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("test.txt", "content")
+
+    bin_file = project_dir / "tool"
+    bin_file.touch()
+    bin_file.chmod(0o755)
+
+    txt_file = project_dir / "README.md"
+    txt_file.touch()
+
+    subdir = project_dir / "docs"
+    subdir.mkdir()
+    (subdir / "info.txt").touch()
+
+    # Mocking FileType to avoid libmagic dependency issues in tests if any,
+    # but we can also use the real one if magic is installed.
+    # The environment seems to have magic installed.
+
+    project = Project(
+        name=project_name, download=["*.zip"], install=[BinAction(source="tool")]
+    )
+    state = ProjectState(name=project_name)
+
+    tree = state.summarize_directory(project)
+
+    console = Console(width=100, force_terminal=True)
+    with console.capture() as capture:
+        console.print(tree)
+    output = capture.get()
+
+    # Assertions
+    assert project_name in output
+    assert "tool.zip" in output
+    assert "tool" in output
+    assert "README.md" in output
+    assert "docs" in output
+    assert "info.txt" in output
+
+    # Check for matches
+    assert "*.zip" in output
+    assert "tool" in output
+    assert "[match:" in output
+
+    # Check for FileType indicators
+    # tool.zip should be identified as an archive
+    assert "archive" in output.lower()
+    # tool should be identified as executable
+    assert "executable" in output.lower()
