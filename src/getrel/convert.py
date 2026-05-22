@@ -13,7 +13,7 @@ from sys import exc_info
 import msgspec
 import xdg.BaseDirectory
 
-from getrel.cli import first_config_path
+from getrel.config import first_config_path
 
 logger = logging.getLogger(__name__)
 

@@ -743,3 +743,17 @@ if __name__ == "__main__":
         )
         print(struct)
         print(msgspec.json.encode(struct))
+
+
+def write_schemas():
+    path = Path(xdg.BaseDirectory.save_config_path("getrel"))
+    path.joinpath("getrel-project.schema.json").write_bytes(
+        msgspec.json.encode(msgspec.json.schema(GithubProject))
+    )
+    path.joinpath("getrel-settings.schema.json").write_bytes(
+        msgspec.json.encode(msgspec.json.schema(Settings))
+    )
+    projects_path = Path(xdg.BaseDirectory.save_config_path("getrel", "projects"))
+    projects_path.joinpath("getrel-project.schema.json").write_bytes(
+        msgspec.json.encode(msgspec.json.schema(GithubProject))
+    )

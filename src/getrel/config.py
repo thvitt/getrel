@@ -32,7 +32,7 @@ def first_config_path(*resource: str | Path) -> Path | None:
         return None
 
 
-def load_project_states():
+def load_project_states() -> dict[str, ProjectState]:
     state_file = Path(
         xdg.BaseDirectory.save_state_path(
             "getrel",
