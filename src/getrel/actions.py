@@ -394,6 +394,7 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
     install: list[Action] = []
     uninstall: list[Action] = []
     download: list[str] = []
+    prerelease: bool = False
 
     @classmethod
     def load(cls, src: str | Path) -> Self:

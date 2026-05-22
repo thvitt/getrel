@@ -355,11 +355,12 @@ def edit(project: str):
 
 
 @app.command(group=management)
-def update():
+def update(prerelease: bool = False):
     """Update all projects metadata and list the projects with updates."""
-    manager = GithubProjectManager()
-    new = manager.look_for_new_versions()
-    list_projects([p.name for p in new])
+    with Progress(transient=True) as progress:
+        manager = GithubProjectManager()
+        new = manager.look_for_new_versions(progress=progress, prerelease=prerelease)
+        list_projects([p.name for p in new])
 
 
 @app.command(group=management)
@@ -370,6 +371,7 @@ def upgrade(
     update: Annotated[
         bool, Parameter(alias="-u", negative=(), group=selection)
     ] = False,
+    prerelease: bool = False,
 ):
     """
     Upgrade the given or all updatable projects.
@@ -377,12 +379,9 @@ def upgrade(
     Args:
         projects: If given, only update the listed projects.
         update: Run update first, i.e., check which projects are updateable.
+        prerelease: Include prereleases.
     """
     manager = GithubProjectManager()
-    if update:
-        manager.look_for_new_versions()
-    if projects is None:
-        projects = manager.updateable_projects()
     with (
         httpx.Client() as client,
         Progress(
@@ -392,8 +391,12 @@ def upgrade(
             console=app.error_console,
         ) as progress,
     ):
+        if update:
+            manager.look_for_new_versions(progress=progress, prerelease=prerelease)
+        if projects is None:
+            projects = manager.updateable_projects()
         for project, artefacts in progress.track(
-            manager.list_artifacts(projects),
+            manager.list_artifacts(projects, prerelease=prerelease),
             description="Getting artefacts ...",
             total=len(projects),
         ):

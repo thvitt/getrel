@@ -118,16 +118,25 @@ class GithubProjectManager:
         else:
             state = self.states[project]
         state.description = result.get("description", state.description)
-        if "latestRelease" in result:
+
+        if "latestRelease" in result and result["latestRelease"]:
+            releases = [result["latestRelease"]]
+        elif "releases" in result:
+            releases = result["releases"]["nodes"]
+        else:
+            releases = []
+
+        if releases:
+            latest_release_data = max(
+                releases, key=lambda r: datetime.fromisoformat(r["publishedAt"])
+            )
             latest_release = Release(
-                published=datetime.fromisoformat(
-                    result["latestRelease"]["publishedAt"]
-                ),
-                version=result["latestRelease"].get("tagName")
-                or result["latestRelease"].get("name"),
-                long_version=result["latestRelease"].get("name")
-                or result["latestRelease"].get("tagName"),
-                description=result["latestRelease"].get("description"),
+                published=datetime.fromisoformat(latest_release_data["publishedAt"]),
+                version=latest_release_data.get("tagName")
+                or latest_release_data.get("name"),
+                long_version=latest_release_data.get("name")
+                or latest_release_data.get("tagName"),
+                description=latest_release_data.get("description"),
             )
             if state.available and latest_release > state.available:
                 logger.info(
@@ -151,32 +160,40 @@ class GithubProjectManager:
             logger.warning("%s does not have a release.", project)
         return False
 
-    def look_for_new_versions(self, save=True):
+    def look_for_new_versions(self, save=True, progress: Progress | None = None, prerelease: bool = False):
         """
         Checks GitHub for all projects that have new releases.
 
         Args:
             save: if True, save the state file after updating
+            progress: progress bar
+            prerelease: if True, also check for prereleases
 
         Returns:
             updated states of all projects with new releases
         """
         new: list[ProjectState] = []
+        projects = list(self.configs.values())
+        if progress:
+            task = progress.add_task("Checking for updates ...", total=len(projects))
+
+        if prerelease:
+            query_part = "releases(first: 20) { nodes { tagName name publishedAt description } }"
+        else:
+            query_part = "latestRelease { tagName name publishedAt description }"
+
         for config, result in run_queries(
-            list(self.configs.values()),
-            """\
-            repository(owner: "{project.user}", name: "{project.repo}") {{
+            projects,
+            f"""\
+            repository(owner: "{{project.user}}", name: "{{project.repo}}") {{{{
                 description
-                latestRelease {{
-                    tagName
-                    name
-                    publishedAt
-                    description
-                }}
-            }}""",
+                {query_part}
+            }}}}""",
         ):
             if self.update_project_state(config.name, result):
                 new.append(self.states[config.name])
+            if progress:
+                progress.advance(task)
 
         if save:
             save_state(self.states)
@@ -186,13 +203,16 @@ class GithubProjectManager:
         return [p.name for p in self.states.values() if p.updateable]
 
     def list_artifacts(
-        self, projects_or_names: list[str] | list[GithubProject] | None = None
+        self,
+        projects_or_names: list[str] | list[GithubProject] | None = None,
+        prerelease: bool = False,
     ):
         """
         Lists the artifact data for all given projects.
 
         Args:
             projects: The projects for which to fetch data. If none given, all 'updateable' projects are used.
+            prerelease: if True, also check for prereleases
 
         Yields:
             a tuple (config, list[Artifact]) for each of the respective projects
@@ -212,33 +232,70 @@ class GithubProjectManager:
             len(projects),
             " ".join(projects),
         )
-        for config, data in run_queries(
-            configs,
-            """
-                repository(owner: "{project.user}", name: "{project.repo}") {{
-                    description
-                    latestRelease {{
+
+        if prerelease:
+            query_part = """\
+                releases(first: 20) {
+                    nodes {
                         tagName
                         name
                         publishedAt
                         description
-                        releaseAssets(first: 100) {{
-                            nodes {{
+                        releaseAssets(first: 100) {
+                            nodes {
                                 name
                                 contentType
                                 downloadUrl
                                 downloadCount
                                 size
-                            }}
-                        }}
-                    }}
-                }}""",
+                            }
+                        }
+                    }
+                }"""
+        else:
+            query_part = """\
+                latestRelease {
+                    tagName
+                    name
+                    publishedAt
+                    description
+                    releaseAssets(first: 100) {
+                        nodes {
+                            name
+                            contentType
+                            downloadUrl
+                            downloadCount
+                            size
+                        }
+                    }
+                }"""
+
+        for config, data in run_queries(
+            configs,
+            f"""
+                repository(owner: "{{project.user}}", name: "{{project.repo}}") {{{{
+                    description
+                    {query_part}
+                }}}}""",
             chunk_size=10,
         ):
             self.update_project_state(config.name, data)
-            raw_assets = (
-                data.get("latestRelease", {}).get("releaseAssets", {}).get("nodes")
-            )
+            if "latestRelease" in data:
+                raw_assets = data["latestRelease"].get("releaseAssets", {}).get("nodes")
+            elif "releases" in data:
+                # search for newest release with assets
+                releases = data["releases"]["nodes"]
+                releases.sort(
+                    key=lambda r: datetime.fromisoformat(r["publishedAt"]), reverse=True
+                )
+                raw_assets = []
+                for release in releases:
+                    raw_assets = release.get("releaseAssets", {}).get("nodes")
+                    if raw_assets:
+                        break
+            else:
+                raw_assets = []
+
             if raw_assets:
                 yield config, [Asset(**raw_asset) for raw_asset in raw_assets]
             else:
@@ -373,7 +430,7 @@ class GithubProjectManager:
                 progress.remove_task(task)
             save_state(self.states)
 
-    def prepare_project(self, url: str):
+    def prepare_project(self, url: str, prerelease: bool = False):
         owner, repo = _split_github_url(url)
 
         # do we already have this configuration?
@@ -391,7 +448,9 @@ class GithubProjectManager:
             for i in count(1):
                 if (name := f"{repo}{i}") not in self.configs:
                     break
-        project = GithubProject("github", owner, repo, name=name)
-        project, assets = first(self.list_artifacts([project]))
+        project = GithubProject(
+            kind="github", user=owner, repo=repo, name=name, prerelease=prerelease
+        )
+        project, assets = first(self.list_artifacts([project], prerelease=prerelease))
         state = self.states[project.name]
         return project, state, assets
