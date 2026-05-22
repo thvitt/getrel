@@ -432,7 +432,10 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
             xdg.BaseDirectory.save_config_path("getrel", "projects"),
             self.name + ".yaml",
         )
-        serialized = msgspec.yaml.encode(self)
+        serialized = (
+            b"# yaml-language-server: $schema=../getrel-project.schema.json\n\n"
+            + msgspec.yaml.encode(self)
+        )
         config_file.write_bytes(serialized)
         return serialized
 
@@ -485,10 +488,12 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         """
         with WorkingDirectory(state.project_dir):
             for action in self.uninstall:
+                logger.debug("Running uninstall action: %s", action)
                 action(state.installed_files)
             remaining = []
             for file in reversed(state.installed_files):
-                if (not delete_assets and self.is_asset(file)) or file in keep:
+                if (self.is_asset(file) and not delete_assets) or file in keep:
+                    logger.debug("Not uninstalling asset %s", file)
                     remaining.append(file)
                 else:
                     try:

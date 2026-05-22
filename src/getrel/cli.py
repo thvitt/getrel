@@ -504,35 +504,31 @@ def uninstall(
 
 
 @app.command(group=management)
-def add(url: str, /, prerelease: bool = False):
-    """
-    🏗 Creates a new preliminary config for the given URL.
+def clean_state(dry_run: bool = False):
+    """Remove the state for all projects that do not have a configuration."""
+    configs = {config.name: config for config in load_project_configs()}
+    state = load_project_states()
+    unconfigured = set(state) - set(configs)
+    if unconfigured:
+        logger.warning(
+            "The following projects no longer have a configuration file, their state will be removed %s",
+            ", ".join(unconfigured),
+        )
+        for name in unconfigured:
+            del state[name]
+        if not dry_run:
+            save_state(state)
+    else:
+        logger.info("All projects that have a state also have a configuration.")
 
-    Work in Progress.
-    """
-    add_(url, prerelease=prerelease)
+
+@app.command(group=management, alias="rm")
+def remove(projects: list[str], /):
+    """Remove the projects, all its files and the project's configuration."""
+    uninstall(projects, delete_assets=True, delete_config=True)
 
 
- @app.command(group=plumbing)
- def save_schemas():
-     """Save the JSON schemas for the configuration files to the settings directory."""
-     write_schemas()
-
-
- @app.command(group=management)
- def clean_state(dry_run: bool = False):
-     """Remove the state for all projects that do not have a configuration."""
-     configs = {config.name: config for config in load_project_configs()}
-     state = load_project_states()
-     unconfigured = set(state) - set(configs)
-     if unconfigured:
-         logger.warning(
-             "The following projects no longer have a configuration file, their state will be removed %s",
-             ", ".join(unconfigured),
-         )
-         for name in unconfigured:
-             del state[name]
-         if not dry_run:
-             save_state(state)
-     else:
-         logger.info("All projects that have a state also have a configuration.")
+@app.command(group=plumbing)
+def save_schemas():
+    """Save the JSON schemas for the configuration files to the settings directory."""
+    write_schemas()
