@@ -523,7 +523,20 @@ class GithubProject(Project, omit_defaults=True):
 
 
 class Settings(msgspec.Struct, omit_defaults=True):
+    """
+    General configuration for GetRel.
+    """
+
     architectures: dict[str, list[str]] = {}
+    """
+    Architecture mapping for expanding {arch} in the source pattterns. Key is an architecture string, value is a list of possible alternatives.
+    """
+
+    add_rules: list[AddRule] = []
+    """
+    Heuristics to automatically generate actions when running 'getrel add'. Each rule can be matched to a file name or mime type, and if it
+    matches, the given action is configured for the given source. 
+    """
 
     def expand_arch(self, pattern: str) -> Iterable[str]:
         if "arch" not in field_names(pattern):
@@ -546,6 +559,31 @@ class Settings(msgspec.Struct, omit_defaults=True):
             return msgspec.yaml.decode(config_file.read_bytes(), type=cls)
         else:
             return cls()
+
+
+class AddRule(msgspec.Struct, omit_defaults=True):
+    """
+    Make `getrel add` automatically configure actions for a given source.
+
+    For each source and each rule:
+    - if there are matches rules and the file name matches at least one of these as glob pattern AND
+    - if there are mime rules and the detected mime type matches at least one of the mime glob patterns AND
+    - the file name matches none of glob patterns under exclude
+    then create the given action, replacing 'source' with the pattern for the given file.
+
+    Use `mime: inode/directory` to match directories. Use 'then: skip' to explicitly not configure an action, even
+    when one of the built-in rules match.
+    """
+
+    matches: list[str] = []
+    exclude: list[str] = []
+    mime: list[str] = []
+
+    then: Action | Literal["skip"] = "skip"
+    """
+    The action to configure. If missing / null, explicitly do not configure an action
+    even if a built-in heuristic would match.
+    """
 
 
 if __name__ == "__main__":

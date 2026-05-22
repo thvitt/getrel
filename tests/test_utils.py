@@ -1,13 +1,14 @@
 import os
 from pathlib import Path
 
-from getrel.utils import WorkingDirectory, expand
+from getrel.actions import Settings
+from getrel.utils import WorkingDirectory
 
 
 def test_expand():
     os.environ["FOO"] = "bar"
-    expanded = expand("~/$FOO/bar")
-    assert expanded == Path.home() / "bar/bar"
+    expanded = list(Settings().expand("~/$FOO/bar"))
+    assert expanded == [Path.home() / "bar/bar"]
 
 
 def test_working_directory(resources):
