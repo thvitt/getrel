@@ -501,8 +501,13 @@ def uninstall(
 
 
 @app.command(group=management)
-def add(url: str, /):
-    add_(url)
+def add(url: str, /, prerelease: bool = False):
+    """
+    🏗 Creates a new preliminary config for the given URL.
+
+    Work in Progress.
+    """
+    add_(url, prerelease=prerelease)
 
 
  @app.command(group=plumbing)

@@ -235,11 +235,11 @@ def mask_architecture(name: str, settings: Settings) -> str:
     return name
 
 
-def add(url: str, auto_level: Literal[0, 1, 2] = 0):
+def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
     scorer = PreferenceScores.load()
     settings = Settings.load()
     manager = GithubProjectManager()
-    project, state, assets_ = manager.prepare_project(url)
+    project, state, assets_ = manager.prepare_project(url, prerelease=prerelease)
     logger.debug("Project: %s, State: %s, Assets: %s", project, state, assets_)
     assets = ScoredAsset.score_assets(assets_, scorer, settings)
     top = _top_scored(assets, key=lambda s: s.score)
@@ -281,21 +281,47 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0):
 
                 logger.debug("Analyzing %s ...", rel_path)
                 filetype = FileType(rel_path)
-                if filetype.archive:
-                    action = UnpackAction(source=str(rel_path))
-                elif file_path.name.startswith("_") or "completions" in rel_path.parts:
-                    action = LinkAction(source=str(rel_path), link="~/.zsh/completions")
-                elif file_path.name.endswith(".1"):
-                    action = LinkAction(source=str(rel_path), link="~/.local/man/man1")
-                elif filetype.executable:
-                    if binary_count < binary_limit:
-                        action = BinAction(source=str(rel_path))
-                        binary_count += 1
-                    else:
-                        logger.warning(
-                            "Sanity limit reached: skipping BinAction for %s",
-                            file_path.name,
+
+                for rule in settings.add_rules:
+                    if rule.matches and not any(
+                        fnmatch.fnmatch(str(rel_path), p) for p in rule.matches
+                    ):
+                        continue
+                    if rule.mime and not any(
+                        fnmatch.fnmatch(filetype.mime or "", p) for p in rule.mime
+                    ):
+                        continue
+                    if rule.exclude and any(
+                        fnmatch.fnmatch(str(rel_path), p) for p in rule.exclude
+                    ):
+                        continue
+                    action = rule.then
+                    if action == "skip":
+                        action = None
+                    break
+
+                if action is None:
+                    if filetype.archive:
+                        action = UnpackAction(source=str(rel_path))
+                    elif (
+                        file_path.name.startswith("_") or "completions" in rel_path.parts
+                    ):
+                        action = LinkAction(
+                            source=str(rel_path), link="~/.zsh/completions"
                         )
+                    elif file_path.name.endswith(".1"):
+                        action = LinkAction(
+                            source=str(rel_path), link="~/.local/man/man1"
+                        )
+                    elif filetype.executable:
+                        if binary_count < binary_limit:
+                            action = BinAction(source=str(rel_path))
+                            binary_count += 1
+                        else:
+                            logger.warning(
+                                "Sanity limit reached: skipping BinAction for %s",
+                                file_path.name,
+                            )
 
                 if action:
                     if state.available and state.available.version:
