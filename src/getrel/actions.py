@@ -16,6 +16,7 @@ from platform import machine
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
+from textwrap import indent
 from typing import TYPE_CHECKING, Literal, Self, overload
 from zipfile import BadZipFile, ZipFile
 
@@ -182,6 +183,9 @@ class UnpackAction(BaseAction):
                         "Failed to unpack %s: %s and %s", source, zip_error, tar_error
                     )
 
+    def __str__(self) -> str:
+        return f"unpack the archive `{self.source}` to `{self.destination or 'the project directory'}`"
+
 
 class AbstractLinkAction(BaseAction):
     link: str | None = None
@@ -269,6 +273,8 @@ class AbstractLinkAction(BaseAction):
 class LinkAction(AbstractLinkAction):
     """
     Creates a symbolic link to each of the files at the directory or filename given by the link property.
+
+    Use `dir = true` to forcibly interprete `destination` as a directory, use `absolute = true` to create a link to an absolute path.
     """
 
     def __call__(self, project_files: list[Path]) -> None:
@@ -276,10 +282,17 @@ class LinkAction(AbstractLinkAction):
         for source in self.sources:
             self._create_link(source, link_dir, project_files)
 
+    def __str__(self) -> str:
+        return f"create {'an absolute' if self.absolute else 'a'} symbolic link to `{self.source}` at `{self.link}`"
+
 
 class BinAction(AbstractLinkAction):
     """
     Creates a symbolic link for each of the binaries listed as source.
+
+    This sets execute permissions for the source.
+    If `bin` is given, the binary's file name can be forced.
+    If `link` is not given, `~/.local/bin/` is used.
     """
 
     bin: str | None = None
@@ -298,6 +311,9 @@ class BinAction(AbstractLinkAction):
             else:
                 self._create_link(source, link_dir / bin_, project_files)
 
+    def __str__(self) -> str:
+        return f"link the binary or binaries matching `{self.source}`"
+
 
 def path_recorder(files: list[Path]) -> Callable[[str | bytes], None]:
     def recorder(line: str | bytes) -> None:
@@ -313,6 +329,13 @@ def path_recorder(files: list[Path]) -> Callable[[str | bytes], None]:
 class ScriptAction(BaseAction):
     """
     Runs the given command or script.
+
+    source is ignored. For `cmd`, the string is interpreted as a executable with arguments.
+    For `script`, you can either give a single command (that is run using the shell), or a
+    multi-line script beginning with a `#!` line. A script would be saved to a temporary file
+    for execution.
+
+    The execution happens in the projct directory.
     """
 
     source: str = ""
@@ -345,6 +368,16 @@ class ScriptAction(BaseAction):
             script_path = Path(script_file.name)
             script_path.chmod(0o700)
             execute([fspath(script_path)], stdout=path_recorder(project_files))
+
+    def __str__(self) -> str:
+        if self.cmd:
+            return f"run the command `{self.cmd}`"
+        elif self.script and "\n" in self.script:
+            return f"run the following shell script:\n\n{indent(self.script, '      ')}"
+        elif self.script:
+            return f"run the shell command `{self.script}`"
+        else:
+            return "! Underconfigured action: " + super().__str__()
 
 
 Action = UnpackAction | BinAction | LinkAction | ScriptAction
@@ -399,6 +432,21 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         serialized = msgspec.yaml.encode(self)
         config_file.write_bytes(serialized)
         return serialized
+
+    def describe_actions(self):
+        result = [
+            "Download:",
+            *(f"* {item}" for item in self.download),
+        ]
+        if self.install:
+            result.append("\nInstall:")
+            for action in self.install:
+                result.append(f"* {action}")  # noqa: PERF401
+        if self.uninstall:
+            result.append("\nUninstall:")
+            for action in self.uninstall:
+                result.append(f"* {action}")  # noqa: PERF401
+        return "\n".join(result)
 
     def do_install(self, state: ProjectState):
         """
@@ -534,6 +582,11 @@ class GithubProject(Project, omit_defaults=True):
     @property
     def url(self):
         return f"https://github.com/{self.user}/{self.repo}"
+
+    def __str__(self) -> str:
+        return (
+            f"GitHub project {self.user}/{self.repo}\n" + self.describe_actions() + "\n"
+        )
 
 
 class Settings(msgspec.Struct, omit_defaults=True):
