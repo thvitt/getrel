@@ -103,6 +103,10 @@ def unique[T](iterable: Iterable[T], /) -> Iterable[T]:
             seen.add(item)
 
 
+def double_braces(src: str) -> str:
+    return src.replace("{", "{{").replace("}", "}}")
+
+
 class FileType:
     """
     Tries to detect the filetype of the given file (which may be a string or

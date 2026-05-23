@@ -69,6 +69,7 @@ class ScoredAsset(Struct):
     def score_assets(
         cls, assets: Iterable[Asset], scorer: PreferenceScores, settings: Settings
     ):
+        logger.debug("Scoring assets %s using scorer %s", assets, scorer)
         scores = [
             cls(asset, scorer.rate(scorer.assets, asset, settings)) for asset in assets
         ]
@@ -237,6 +238,7 @@ def mask_architecture(name: str, settings: Settings) -> str:
 
 def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
     scorer = PreferenceScores.load()
+    logger.debug("Asset scorer: %s", scorer)
     settings = Settings.load()
     manager = GithubProjectManager()
     project, state, assets_ = manager.prepare_project(url, prerelease=prerelease)
@@ -304,7 +306,8 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                     if filetype.archive:
                         action = UnpackAction(source=str(rel_path))
                     elif (
-                        file_path.name.startswith("_") or "completions" in rel_path.parts
+                        file_path.name.startswith("_")
+                        or "completions" in rel_path.parts
                     ):
                         action = LinkAction(
                             source=str(rel_path), link="~/.zsh/completions"

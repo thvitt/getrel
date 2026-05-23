@@ -10,12 +10,12 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from httpx import Client
-from msgspec import Struct
+from msgspec import Struct, convert
 from rich.progress import Progress
 
 from getrel.actions import GithubProject, Project, ProjectState, Release, Settings
 from getrel.config import load_project_configs, load_project_states, save_state
-from getrel.utils import WorkingDirectory, first, split_list
+from getrel.utils import WorkingDirectory, double_braces, first, split_list
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class ProjectExistsError(ValueError):
         super().__init__(f"Project already exists: {project}")
 
 
-class Asset(Struct):
+class Asset(Struct, frozen=True):
     name: str
     contentType: str  # noqa: N815
     downloadUrl: str  # noqa: N815
@@ -54,6 +54,12 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
         will yield tuples like `(project, {'description': 'multiple cursors in neovim'})`
 
     """
+    logger.debug(
+        "Preparing query from %s, using %d projects (%s)",
+        query,
+        len(projects),
+        projects,
+    )
     queries = [
         f"r{i}: " + query.format_map({"project": project})
         for i, project in enumerate(projects)
@@ -119,7 +125,7 @@ class GithubProjectManager:
             state = self.states[project]
         state.description = result.get("description", state.description)
 
-        if "latestRelease" in result and result["latestRelease"]:
+        if result.get("latestRelease"):
             releases = [result["latestRelease"]]
         elif "releases" in result:
             releases = result["releases"]["nodes"]
@@ -160,7 +166,9 @@ class GithubProjectManager:
             logger.warning("%s does not have a release.", project)
         return False
 
-    def look_for_new_versions(self, save=True, progress: Progress | None = None, prerelease: bool = False):
+    def look_for_new_versions(
+        self, save=True, progress: Progress | None = None, prerelease: bool = False
+    ):
         """
         Checks GitHub for all projects that have new releases.
 
@@ -178,7 +186,9 @@ class GithubProjectManager:
             task = progress.add_task("Checking for updates ...", total=len(projects))
 
         if prerelease:
-            query_part = "releases(first: 20) { nodes { tagName name publishedAt description } }"
+            query_part = (
+                "releases(first: 20) { nodes { tagName name publishedAt description } }"
+            )
         else:
             query_part = "latestRelease { tagName name publishedAt description }"
 
@@ -187,7 +197,7 @@ class GithubProjectManager:
             f"""\
             repository(owner: "{{project.user}}", name: "{{project.repo}}") {{{{
                 description
-                {query_part}
+                {double_braces(query_part)}
             }}}}""",
         ):
             if self.update_project_state(config.name, result):
@@ -275,7 +285,7 @@ class GithubProjectManager:
             f"""
                 repository(owner: "{{project.user}}", name: "{{project.repo}}") {{{{
                     description
-                    {query_part}
+                    {double_braces(query_part)}
                 }}}}""",
             chunk_size=10,
         ):
@@ -297,7 +307,8 @@ class GithubProjectManager:
                 raw_assets = []
 
             if raw_assets:
-                yield config, [Asset(**raw_asset) for raw_asset in raw_assets]
+                logger.debug("Parsing asset records %s", raw_assets)
+                yield config, [convert(raw_asset, Asset) for raw_asset in raw_assets]
             else:
                 logger.warning(
                     "%s: Release %s has no downloadable assets",
