@@ -1,9 +1,11 @@
+import dataclasses
 import logging
 import os
 import shlex
 import shutil
 import subprocess
 from collections.abc import Iterable
+from fnmatch import fnmatch
 from pathlib import Path
 from textwrap import indent
 from typing import Annotated
@@ -22,7 +24,7 @@ from rich.table import Column, Table
 from rich.text import Text
 from rich.traceback import install as install_rich_traceback
 
-from getrel.actions import BinAction, ProjectState, Settings, write_schemas
+from getrel.actions import BinAction, Project, ProjectState, Settings, write_schemas
 from getrel.add import PreferenceScores, identifying_pattern
 from getrel.add import add as add_
 from getrel.config import (
@@ -34,7 +36,7 @@ from getrel.config import (
 )
 from getrel.convert import convert_file, convert_state
 from getrel.github import GithubProjectManager
-from getrel.utils import WorkingDirectory, enc_hook
+from getrel.utils import WorkingDirectory, enc_hook, unique
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +256,245 @@ def check(projects: list[str] | None = None):
                         len(extra_files),
                         _ls_files(extra_files),
                     )
+
+
+def _resolve_installed_file(file: Path, project_dir: Path) -> Path:
+    return file if file.is_absolute() else project_dir / file
+
+
+def _is_asset(filename: str, config: Project) -> bool:
+    settings = Settings.load()
+    return any(
+        fnmatch(filename, exp_pat)
+        for pat in config.download
+        for exp_pat in settings.expand_arch(pat)
+    )
+
+
+def _classify_install_status(
+    state: ProjectState, existing: list[Path], missing: list[Path]
+) -> str:
+    total = len(existing) + len(missing)
+    if not state.installed:
+        return "[dim]not installed[/dim]"
+    if not state.installed_files:
+        return "[yellow]installed (no files tracked)[/yellow]"
+    if not missing:
+        return f"[green]installed ({total} files)[/green]"
+    if not existing:
+        return f"[red]uninstalled ({total} tracked files missing)[/red]"
+    return (
+        f"[yellow]partially installed ({len(existing)}/{total} files present)[/yellow]"
+    )
+
+
+def _scan_project_dir(
+    project_dir: Path, known_abs: set[Path], config: Project | None
+) -> tuple[list[Path], list[Path]]:
+    """Returns (old_versions, unknown_files) for on-disk files not in the installed state."""
+    old_versions: list[Path] = []
+    unknown_files: list[Path] = []
+    for root, dirs, files in project_dir.walk():
+        if root == project_dir:
+            dirs[:] = [d for d in dirs if d != ".getrel"]
+        for fname in files:
+            fpath = root / fname
+            if fpath.resolve() in known_abs:
+                continue
+            if config is not None and _is_asset(fname, config):
+                old_versions.append(fpath)
+            else:
+                unknown_files.append(fpath)
+    return old_versions, unknown_files
+
+
+@dataclasses.dataclass
+class _RepairCtx:
+    dry_run: bool
+    reinstall: bool
+    remove_unknown: bool
+    remove_old_versions: bool
+    console: Console
+
+
+@dataclasses.dataclass(frozen=True)
+class _FileKind:
+    label: str
+    style: str
+    flag_name: str
+    remove: bool
+
+
+def _handle_extra_files(
+    files: list[Path], project_dir: Path, kind: _FileKind, ctx: _RepairCtx
+) -> None:
+    if not files:
+        return
+    for f in files:
+        rel = f.relative_to(project_dir)
+        if kind.remove:
+            verb = "would remove" if ctx.dry_run else "removing"
+            ctx.console.print(
+                f"  [{kind.style}]{verb} {kind.label}:[/{kind.style}] {rel}"
+            )
+            if not ctx.dry_run:
+                f.unlink()
+        else:
+            ctx.console.print(f"  [{kind.style}]{kind.label}:[/{kind.style}] {rel}")
+    if not kind.remove:
+        noun = f"{len(files)} {kind.label}{'s' if len(files) != 1 else ''}"
+        ctx.console.print(f"  [dim]({noun}; use {kind.flag_name} to delete)[/dim]")
+
+
+def _handle_reinstall(
+    state: ProjectState, config: Project, project_dir: Path, ctx: _RepairCtx
+) -> bool:
+    """Offers or performs reinstall. Returns True if state was changed."""
+    assets = [
+        f for f in project_dir.iterdir() if f.is_file() and _is_asset(f.name, config)
+    ]
+    if not assets:
+        return False
+    if ctx.reinstall:
+        verb = "Would reinstall" if ctx.dry_run else "Reinstalling"
+        ctx.console.print(f"  [green]{verb} using {len(assets)} asset(s)[/green]")
+        if not ctx.dry_run:
+            state.installed_files = [a.relative_to(project_dir) for a in assets]
+            config.do_install(state)
+            state.installed_files = list(unique(state.installed_files))
+            return True
+    else:
+        ctx.console.print(
+            f"  [dim]{len(assets)} asset(s) present; use --reinstall to reinstall[/dim]"
+        )
+    return False
+
+
+def _repair_project(
+    project_name: str, state: ProjectState, config: Project | None, ctx: _RepairCtx
+) -> bool:
+    """Repairs a single project. Returns True if the state was changed."""
+    project_dir = state.project_dir
+
+    original_count = len(state.installed_files)
+    state.sanitize_files()
+    dup_count = original_count - len(state.installed_files)
+
+    existing: list[Path] = []
+    missing: list[Path] = []
+    known_abs: set[Path] = set()
+    for file in state.installed_files:
+        resolved = _resolve_installed_file(file, project_dir)
+        known_abs.add(resolved.resolve())
+        if resolved.exists():
+            existing.append(file)
+        else:
+            missing.append(file)
+
+    old_versions: list[Path] = []
+    unknown_files: list[Path] = []
+    if project_dir.exists():
+        old_versions, unknown_files = _scan_project_dir(project_dir, known_abs, config)
+
+    if not (dup_count or missing or old_versions or unknown_files):
+        return False
+
+    ctx.console.print(
+        f"[bold]{project_name}[/bold]: {_classify_install_status(state, existing, missing)}",
+        highlight=False,
+    )
+    if dup_count:
+        verb = "would remove" if ctx.dry_run else "removed"
+        ctx.console.print(
+            f"  [dim]{verb} {dup_count} duplicate state entr{'y' if dup_count == 1 else 'ies'}[/dim]"
+        )
+    for f in missing:
+        ctx.console.print(f"  [red]✗[/red] {f}")
+
+    was_installed = bool(state.installed)
+    state_changed = False
+    if missing:
+        state.installed_files = existing
+        if not existing and state.installed:
+            state.installed = None
+        state_changed = not ctx.dry_run
+    elif dup_count:
+        state_changed = not ctx.dry_run
+
+    if (
+        missing
+        and was_installed
+        and config
+        and project_dir.exists()
+        and _handle_reinstall(state, config, project_dir, ctx)
+    ):
+        state_changed = True
+
+    _handle_extra_files(
+        old_versions,
+        project_dir,
+        _FileKind(
+            "old version", "yellow", "--remove-old-versions", ctx.remove_old_versions
+        ),
+        ctx,
+    )
+    _handle_extra_files(
+        unknown_files,
+        project_dir,
+        _FileKind("unknown", "red", "--remove-unknown", ctx.remove_unknown),
+        ctx,
+    )
+
+    return state_changed
+
+
+@app.command(group=management)
+def repair(
+    projects: list[str] | None = None,
+    /,
+    *,
+    remove_unknown: Annotated[bool, Parameter(alias="-u", negative=())] = False,
+    remove_old_versions: Annotated[bool, Parameter(alias="-o", negative=())] = False,
+    reinstall: Annotated[bool, Parameter(alias="-r", negative=())] = False,
+    dry_run: Annotated[bool, Parameter(alias="-n", negative=())] = False,
+):
+    """
+    Check and repair the state of installed projects.
+
+    For each project, validates that all listed installed files exist, removes
+    missing entries from the state, finds unknown or outdated files in the project
+    directory, and deduplicates the installed file list.
+
+    Args:
+        projects: Only repair specific projects.
+        remove_unknown: Remove files in the project directory that are not listed as installed and do not match the download pattern.
+        remove_old_versions: Remove files matching the download pattern that are not listed as installed (old downloaded versions).
+        reinstall: Reinstall partially installed projects whose downloaded artifacts are still present.
+        dry_run: Report what would be changed without making any changes.
+    """
+    configs = {p.name: p for p in load_project_configs()}
+    states = load_project_states()
+    projects = projects or list(states)
+    ctx = _RepairCtx(
+        dry_run=dry_run,
+        reinstall=reinstall,
+        remove_unknown=remove_unknown,
+        remove_old_versions=remove_old_versions,
+        console=get_console(),
+    )
+    state_changed = False
+
+    for project_name in projects:
+        if project_name not in states:
+            logger.info("No state for project %s", project_name)
+            continue
+        if _repair_project(
+            project_name, states[project_name], configs.get(project_name), ctx
+        ):
+            state_changed = True
+
+    if state_changed and not dry_run:
+        save_state(states)
 
 
 @app.command(group=infos)

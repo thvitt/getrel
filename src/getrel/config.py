@@ -4,6 +4,7 @@ from pathlib import Path
 import msgspec
 import xdg.BaseDirectory
 from msgspec.json import decode
+from msgspec import DecodeError
 
 from getrel.actions import GithubProject, ProjectState
 from getrel.utils import dec_hook, enc_hook
@@ -14,7 +15,10 @@ logger = logging.getLogger()
 def load_project_configs():
     config_dir = Path(xdg.BaseDirectory.load_first_config("getrel", "projects"))
     for config_file in config_dir.glob("*.yaml"):
-        yield GithubProject.load(config_file)
+        try:
+            yield GithubProject.load(config_file)
+        except DecodeError as e:
+            logger.error("Cannot load config %s, skipping: %s", config_file, e)
 
 
 def load_project_config(name: str):
@@ -43,7 +47,10 @@ def load_project_states() -> dict[str, ProjectState]:
         return {
             state.name: state
             for state in msgspec.msgpack.decode(
-                state_file.read_bytes(), type=list[ProjectState], dec_hook=dec_hook
+                state_file.read_bytes(),
+                type=list[ProjectState],
+                dec_hook=dec_hook,
+                strict=False,
             )
         }
     else:

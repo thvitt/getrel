@@ -409,7 +409,7 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
                 "getrel", "projects", src + ".yaml"
             )
             src = Path(config_file) if config_file else Path(src)
-        result = msgspec.yaml.decode(src.read_bytes(), type=cls)
+        result = msgspec.yaml.decode(src.read_text(), type=cls)
         result.configured = datetime.fromtimestamp(src.stat().st_mtime)  # pyright: ignore[reportAttributeAccessIssue]
         return result
 
