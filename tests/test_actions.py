@@ -73,7 +73,7 @@ def test_script_cmd(tmp_path: Path):
 def test_script_script(tmp_path: Path):
     files = []
     with WorkingDirectory(tmp_path):
-        action = ScriptAction(script="echo foo")
+        action = ScriptAction(script="touch foo && echo foo")
         action(files)
     assert files == [Path("foo")]
 
@@ -83,6 +83,8 @@ def test_script_shebang(tmp_path: Path):
     with WorkingDirectory(tmp_path):
         action = ScriptAction(
             script="""#!/bin/env python3
+with open("foo", "wt") as f:
+    f.write("Hello world!")
 print("foo")
 """
         )

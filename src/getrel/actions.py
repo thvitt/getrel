@@ -12,7 +12,7 @@ from functools import lru_cache
 from os import fspath
 from os.path import expandvars
 from pathlib import Path
-from platform import machine
+from platform import machine, processor
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
@@ -22,7 +22,7 @@ from zipfile import BadZipFile, ZipFile
 
 import msgspec
 import xdg.BaseDirectory
-from logproc import execute
+from logproc import OutputCallback, execute, proc_logger
 from rich.text import Text
 from rich.tree import Tree
 
@@ -171,16 +171,21 @@ class UnpackAction(BaseAction):
                     if source.suffix == ".zst" or source.name.endswith(".tar.zst"):
                         try:
                             with (
-                                subprocess.Popen(["zstd", "-dc", fspath(source)], stdout=subprocess.PIPE) as proc,
+                                subprocess.Popen(
+                                    ["zstd", "-dc", fspath(source)],
+                                    stdout=subprocess.PIPE,
+                                ) as proc,
                                 tarfile.open(fileobj=proc.stdout, mode="r|") as archive,
                             ):
-                                    archive.extractall(
-                                        fspath(self.destination or "."),
-                                        filter=self._make_record_tar_filter(project_files),
-                                    )
+                                archive.extractall(
+                                    fspath(self.destination or "."),
+                                    filter=self._make_record_tar_filter(project_files),
+                                )
                             continue
                         except Exception as zstd_error:
-                             logger.error("Failed to unpack %s with zstd: %s", source, zstd_error)
+                            logger.error(
+                                "Failed to unpack %s with zstd: %s", source, zstd_error
+                            )
                     logger.error(
                         "Failed to unpack %s: %s and %s", source, zip_error, tar_error
                     )
@@ -317,13 +322,22 @@ class BinAction(AbstractLinkAction):
         return f"link the binary or binaries matching `{self.source}`"
 
 
-def path_recorder(files: list[Path]) -> Callable[[str | bytes], None]:
+def path_recorder(
+    files: list[Path], fallback: OutputCallback | None = None
+) -> Callable[[str | bytes], None]:
+    if fallback is None:
+        fallback = proc_logger()
+
     def recorder(line: str | bytes) -> None:
         if isinstance(line, bytes):
             line = line.decode()
         line = line.removesuffix("\n")
         if line:
-            files.append(Path(line))
+            path = Path(line)
+            if path.exists():
+                files.append(path)
+            else:
+                fallback(line)
 
     return recorder
 
@@ -353,13 +367,32 @@ class ScriptAction(BaseAction):
 
     def __call__(self, project_files: list[Path]) -> None:
         if self.cmd:
-            execute(shlex.split(self.cmd), stdout=path_recorder(project_files))
+            args = shlex.split(self.cmd)
+            execute(
+                args,
+                stdout=path_recorder(
+                    project_files,
+                    fallback=proc_logger(
+                        prefix=args[0], level=logging.WARNING, logger=logger
+                    ),
+                ),
+            )
         elif self.script is not None and self.script.strip().startswith("#!"):
             self._run_script(self.script, project_files)
         else:
             assert self.script is not None  # guaranteed by validation
             cmd = [os.environ.get("SHELL", "/bin/sh"), "-c", self.script]
-            execute(cmd, stdout=path_recorder(project_files))
+            execute(
+                cmd,
+                stdout=path_recorder(
+                    project_files,
+                    fallback=proc_logger(
+                        prefix=shlex.split(self.script)[0],
+                        level=logging.WARNING,
+                        logger=logger,
+                    ),
+                ),
+            )
 
     def _run_script(self, script: str, project_files: list[Path]):
         with NamedTemporaryFile(
@@ -369,7 +402,15 @@ class ScriptAction(BaseAction):
             script_file.close()
             script_path = Path(script_file.name)
             script_path.chmod(0o700)
-            execute([fspath(script_path)], stdout=path_recorder(project_files))
+            execute(
+                [fspath(script_path)],
+                stdout=path_recorder(
+                    project_files,
+                    fallback=proc_logger(
+                        prefix=script_file.name, level=logging.WARNING, logger=logger
+                    ),
+                ),
+            )
 
     def __str__(self) -> str:
         if self.cmd:
