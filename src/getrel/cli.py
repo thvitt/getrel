@@ -526,8 +526,10 @@ def capture(*objects, **kwargs) -> str:
 
 
 @app.command(group=infos)
-def ls(project):
+def ls(project: str | None = None):
     """Summarize the installed files of the given project."""
+    if project is None:
+        return list_projects()
     states = load_project_states()
     if project in states:
         config = load_project_config(project)
