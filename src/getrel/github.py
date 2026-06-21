@@ -236,7 +236,8 @@ class GithubProjectManager:
             projects = [config.name for config in configs]  # pyright: ignore[reportAttributeAccessIssue]
         else:
             projects = cast("list[str]", projects_or_names)
-            configs = [self.configs[name] for name in projects_or_names]  # pyright: ignore[reportArgumentType]
+            configs = [self.configs[name] for name in projects if name in self.configs]
+            projects = [config.name for config in configs]
         logger.info(
             "Fetching release info for %d projects: %s",
             len(projects),

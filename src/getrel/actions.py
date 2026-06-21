@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from importlib import import_module
 import logging
 import os
 import shlex
+from shutil import copyfileobj
 import subprocess
 import tarfile
 from abc import abstractmethod
@@ -186,8 +188,27 @@ class UnpackAction(BaseAction):
                             logger.error(
                                 "Failed to unpack %s with zstd: %s", source, zstd_error
                             )
+                    # now the last resort: not a tar archive, but a directly packed single file.
+                    for method in ["gzip", "bz2", "lzma", "compression.zstd"]:
+                        errors: dict[str, Exception] = {}
+                        try:
+                            compressor = import_module(method)
+                            with compressor.open(source, "r") as archive:  # noqa: SIM117
+                                with source.with_suffix("").open("wb") as unpacked:
+                                    copyfileobj(archive, unpacked)
+                                    project_files.append(source.with_suffix(""))
+                                    return
+                        except Exception as e:
+                            errors[method] = e
+                    uncompress_msg = "could not uncompress:\n" + "\n".join(
+                        f" - {m}: {e!r}" for m, e in errors.items()
+                    )
                     logger.error(
-                        "Failed to unpack %s: %s and %s", source, zip_error, tar_error
+                        "Failed to unpack %s: %s, %s and %s",
+                        source,
+                        zip_error,
+                        tar_error,
+                        ExceptionGroup(uncompress_msg, list(errors.values())),
                     )
 
     def __str__(self) -> str:
@@ -500,8 +521,18 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         Run all configured install actions.
         """
         with WorkingDirectory(state.project_dir):
+            install_errors = []
             for action in self.install:
-                action(state.installed_files)
+                try:
+                    action(state.installed_files)
+                except Exception as e:
+                    logger.warning("%s: %s: %s", self.name, action, e)
+                    install_errors.append(e)
+            if install_errors:
+                raise ExceptionGroup(
+                    f"{len(install_errors)}/{len(self.install)} actions failed installing {self.name}",
+                    install_errors,
+                )
 
     def is_asset(self, file: str | Path) -> bool:
         """
