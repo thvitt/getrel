@@ -29,7 +29,7 @@ def setup_logging(verbose: int, console: Console) -> None:
         RichHandler(console=console, rich_tracebacks=_state.debug),
         # a plain string format would have "\n{exception}" auto-appended, duplicating
         # the traceback that RichHandler itself renders from the record's exc_info
-        format=lambda _record: "{message}\n",
+        format=lambda _record: "{message}",
         filter={"": global_level, "getrel": local_level},
     )
     if _state.debug:
