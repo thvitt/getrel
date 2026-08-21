@@ -521,14 +521,15 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         """
         Run all configured install actions.
         """
-        with WorkingDirectory(state.project_dir):
+        with WorkingDirectory(state.project_dir), logger.contextualize(project=self.name):
             install_errors = []
             for action in self.install:
-                try:
-                    action(state.installed_files)
-                except Exception as e:
-                    logger.warning("{}: {}: {}", self.name, action, e)
-                    install_errors.append(e)
+                with logger.contextualize(action=str(action)):
+                    try:
+                        action(state.installed_files)
+                    except Exception as e:
+                        logger.warning("{}: {}: {}", self.name, action, e)
+                        install_errors.append(e)
             if install_errors:
                 raise ExceptionGroup(
                     f"{len(install_errors)}/{len(self.install)} actions failed installing {self.name}",
@@ -559,10 +560,11 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
             delete_assets: If True, also delete downloaded assets.
             keep: Paths to files that should not be deleted.
         """
-        with WorkingDirectory(state.project_dir):
+        with WorkingDirectory(state.project_dir), logger.contextualize(project=self.name):
             for action in self.uninstall:
-                logger.debug("Running uninstall action: {}", action)
-                action(state.installed_files)
+                with logger.contextualize(action=str(action)):
+                    logger.debug("Running uninstall action: {}", action)
+                    action(state.installed_files)
             remaining = []
             for file in reversed(state.installed_files):
                 if (self.is_asset(file) and not delete_assets) or file in keep:

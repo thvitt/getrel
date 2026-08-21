@@ -240,112 +240,118 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
     settings = Settings.load()
     manager = GithubProjectManager()
     project, state, assets_ = manager.prepare_project(url, prerelease=prerelease)
-    logger.debug("Project: {}, State: {}, Assets: {}", project, state, assets_)
-    assets = ScoredAsset.score_assets(assets_, scorer, settings)
-    top = _top_scored(assets, key=lambda s: s.score)
-    logger.debug("Top assets: {}", top)
-    project.download = [
-        identifying_pattern(
-            [a.asset.name for a in top],
-            assets[0].asset.name,
-            state.available.version if state.available else None,
-            settings=settings,
-        )
-    ]
-    with (
-        WorkingDirectory(state.project_dir),
-        Client() as client,
-        Progress() as progress,
-    ):
-        file_idx = len(state.installed_files)
-        downloaded_files = list(manager.download(project, assets_, client, progress))
-        logger.debug(
-            "Downloaded files: {}, from asset list: {}", downloaded_files, assets_
-        )
+    with logger.contextualize(project=project.name):
+        logger.debug("Project: {}, State: {}, Assets: {}", project, state, assets_)
+        assets = ScoredAsset.score_assets(assets_, scorer, settings)
+        top = _top_scored(assets, key=lambda s: s.score)
+        logger.debug("Top assets: {}", top)
+        project.download = [
+            identifying_pattern(
+                [a.asset.name for a in top],
+                assets[0].asset.name,
+                state.available.version if state.available else None,
+                settings=settings,
+            )
+        ]
+        with (
+            WorkingDirectory(state.project_dir),
+            Client() as client,
+            Progress() as progress,
+        ):
+            file_idx = len(state.installed_files)
+            downloaded_files = list(
+                manager.download(project, assets_, client, progress)
+            )
+            logger.debug(
+                "Downloaded files: {}, from asset list: {}", downloaded_files, assets_
+            )
 
-        new_files = list(downloaded_files)
-        binary_limit = 5
-        binary_count = 0
+            new_files = list(downloaded_files)
+            binary_limit = 5
+            binary_count = 0
 
-        while new_files:
-            current_files = new_files
-            new_files = []
+            while new_files:
+                current_files = new_files
+                new_files = []
 
-            for file in current_files:
-                action = None
-                file_path = Path(file)
-                try:
-                    rel_path = file_path.relative_to(Path.cwd())
-                except ValueError:
-                    rel_path = file_path
+                for file in current_files:
+                    action = None
+                    file_path = Path(file)
+                    try:
+                        rel_path = file_path.relative_to(Path.cwd())
+                    except ValueError:
+                        rel_path = file_path
 
-                logger.debug("Analyzing {} ...", rel_path)
-                filetype = FileType(rel_path)
+                    logger.debug("Analyzing {} ...", rel_path)
+                    filetype = FileType(rel_path)
 
-                for rule in settings.add_rules:
-                    if rule.matches and not any(
-                        fnmatch.fnmatch(str(rel_path), p) for p in rule.matches
-                    ):
-                        continue
-                    if rule.mime and not any(
-                        fnmatch.fnmatch(filetype.mime or "", p) for p in rule.mime
-                    ):
-                        continue
-                    if rule.exclude and any(
-                        fnmatch.fnmatch(str(rel_path), p) for p in rule.exclude
-                    ):
-                        continue
-                    action = rule.then
-                    if action == "skip":
-                        action = None
-                    break
+                    for rule in settings.add_rules:
+                        if rule.matches and not any(
+                            fnmatch.fnmatch(str(rel_path), p) for p in rule.matches
+                        ):
+                            continue
+                        if rule.mime and not any(
+                            fnmatch.fnmatch(filetype.mime or "", p) for p in rule.mime
+                        ):
+                            continue
+                        if rule.exclude and any(
+                            fnmatch.fnmatch(str(rel_path), p) for p in rule.exclude
+                        ):
+                            continue
+                        action = rule.then
+                        if action == "skip":
+                            action = None
+                        break
 
-                if action is None:
-                    if filetype.archive:
-                        action = UnpackAction(source=str(rel_path))
-                    elif (
-                        file_path.name.startswith("_")
-                        or "completions" in rel_path.parts
-                    ):
-                        action = LinkAction(
-                            source=str(rel_path), link="~/.zsh/completions"
-                        )
-                    elif file_path.name.endswith(".1"):
-                        action = LinkAction(
-                            source=str(rel_path), link="~/.local/man/man1"
-                        )
-                    elif filetype.executable:
-                        if binary_count < binary_limit:
-                            action = BinAction(source=str(rel_path))
-                            binary_count += 1
-                        else:
-                            logger.warning(
-                                "Sanity limit reached: skipping BinAction for {}",
-                                file_path.name,
+                    if action is None:
+                        if filetype.archive:
+                            action = UnpackAction(source=str(rel_path))
+                        elif (
+                            file_path.name.startswith("_")
+                            or "completions" in rel_path.parts
+                        ):
+                            action = LinkAction(
+                                source=str(rel_path), link="~/.zsh/completions"
+                            )
+                        elif file_path.name.endswith(".1"):
+                            action = LinkAction(
+                                source=str(rel_path), link="~/.local/man/man1"
+                            )
+                        elif filetype.executable:
+                            if binary_count < binary_limit:
+                                action = BinAction(source=str(rel_path))
+                                binary_count += 1
+                            else:
+                                logger.warning(
+                                    "Sanity limit reached: skipping BinAction for {}",
+                                    file_path.name,
+                                )
+
+                    if action:
+                        with logger.contextualize(action=str(action)):
+                            if state.available and state.available.version:
+                                action.source = mask_version(
+                                    action.source, state.available.version
+                                )
+                            action.source = mask_architecture(action.source, settings)
+                            logger.debug("Added {} for {}", action, file)
+                            project.install.append(action)
+                            action_created_files = []  # FIXME should pass list of all files
+                            action(action_created_files)
+                            logger.debug(
+                                "… created files: {}", action_created_files
                             )
 
-                if action:
-                    if state.available and state.available.version:
-                        action.source = mask_version(
-                            action.source, state.available.version
-                        )
-                    action.source = mask_architecture(action.source, settings)
-                    logger.debug("Added {} for {}", action, file)
-                    project.install.append(action)
-                    action_created_files = []  # FIXME should pass list of all files
-                    action(action_created_files)
-                    logger.debug("… created files: {}", action_created_files)
+                            if state.installed_files is None:
+                                state.installed_files = []
 
-                    if state.installed_files is None:
-                        state.installed_files = []
-
-                    for new_f in action_created_files:
-                        state.installed_files.append(new_f)
-                        if new_f.is_relative_to(Path.cwd()):
-                            new_files.append(new_f)
-                else:
-                    logger.debug("No suitable action for {}", file)
-            config_yaml = project.save()
-            logger.info("Final project config:\n{}", config_yaml.decode())
-            logger.debug("Final project state: {}", state)
-            save_state(manager.states)
+                            for new_f in action_created_files:
+                                state.installed_files.append(new_f)
+                                if new_f.is_relative_to(Path.cwd()):
+                                    new_files.append(new_f)
+                    else:
+                        logger.debug("No suitable action for {}", file)
+                config_yaml = project.save()
+                logger.info("Final project config:\n{}", config_yaml.decode())
+                logger.debug("Final project state: {}", state)
+                save_state(manager.states)

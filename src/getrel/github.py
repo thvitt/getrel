@@ -116,53 +116,56 @@ class GithubProjectManager:
         Returns:
             True if the project has a new release
         """
-        if project not in self.states:
-            self.states[project] = state = ProjectState(project)
-            logger.debug("No known state for {}, creating one", project)
-        else:
-            state = self.states[project]
-        state.description = result.get("description", state.description)
+        with logger.contextualize(project=project):
+            if project not in self.states:
+                self.states[project] = state = ProjectState(project)
+                logger.debug("No known state for {}, creating one", project)
+            else:
+                state = self.states[project]
+            state.description = result.get("description", state.description)
 
-        if result.get("latestRelease"):
-            releases = [result["latestRelease"]]
-        elif "releases" in result:
-            releases = result["releases"]["nodes"]
-        else:
-            releases = []
+            if result.get("latestRelease"):
+                releases = [result["latestRelease"]]
+            elif "releases" in result:
+                releases = result["releases"]["nodes"]
+            else:
+                releases = []
 
-        if releases:
-            latest_release_data = max(
-                releases, key=lambda r: datetime.fromisoformat(r["publishedAt"])
-            )
-            latest_release = Release(
-                published=datetime.fromisoformat(latest_release_data["publishedAt"]),
-                version=latest_release_data.get("tagName")
-                or latest_release_data.get("name"),
-                long_version=latest_release_data.get("name")
-                or latest_release_data.get("tagName"),
-                description=latest_release_data.get("description"),
-            )
-            if state.available and latest_release > state.available:
-                logger.info(
-                    "{}: New release {} ({})",
-                    project,
-                    latest_release.version,
-                    latest_release.published.isoformat(),
+            if releases:
+                latest_release_data = max(
+                    releases, key=lambda r: datetime.fromisoformat(r["publishedAt"])
                 )
-                state.available = latest_release
-                return True
-            elif state.available is None:
-                logger.info(
-                    "{}: Release {} available ({})",
-                    project,
-                    latest_release.version,
-                    latest_release.published.isoformat(),
+                latest_release = Release(
+                    published=datetime.fromisoformat(
+                        latest_release_data["publishedAt"]
+                    ),
+                    version=latest_release_data.get("tagName")
+                    or latest_release_data.get("name"),
+                    long_version=latest_release_data.get("name")
+                    or latest_release_data.get("tagName"),
+                    description=latest_release_data.get("description"),
                 )
-                state.available = latest_release
-                return True
-        else:
-            logger.warning("{} does not have a release.", project)
-        return False
+                if state.available and latest_release > state.available:
+                    logger.info(
+                        "{}: New release {} ({})",
+                        project,
+                        latest_release.version,
+                        latest_release.published.isoformat(),
+                    )
+                    state.available = latest_release
+                    return True
+                elif state.available is None:
+                    logger.info(
+                        "{}: Release {} available ({})",
+                        project,
+                        latest_release.version,
+                        latest_release.published.isoformat(),
+                    )
+                    state.available = latest_release
+                    return True
+            else:
+                logger.warning("{} does not have a release.", project)
+            return False
 
     def look_for_new_versions(
         self, save=True, progress: Progress | None = None, prerelease: bool = False
@@ -288,32 +291,39 @@ class GithubProjectManager:
                 }}}}""",
             chunk_size=10,
         ):
-            self.update_project_state(config.name, data)
-            if "latestRelease" in data:
-                raw_assets = data["latestRelease"].get("releaseAssets", {}).get("nodes")
-            elif "releases" in data:
-                # search for newest release with assets
-                releases = data["releases"]["nodes"]
-                releases.sort(
-                    key=lambda r: datetime.fromisoformat(r["publishedAt"]), reverse=True
-                )
-                raw_assets = []
-                for release in releases:
-                    raw_assets = release.get("releaseAssets", {}).get("nodes")
-                    if raw_assets:
-                        break
-            else:
-                raw_assets = []
+            with logger.contextualize(project=config.name):
+                self.update_project_state(config.name, data)
+                if "latestRelease" in data:
+                    raw_assets = (
+                        data["latestRelease"].get("releaseAssets", {}).get("nodes")
+                    )
+                elif "releases" in data:
+                    # search for newest release with assets
+                    releases = data["releases"]["nodes"]
+                    releases.sort(
+                        key=lambda r: datetime.fromisoformat(r["publishedAt"]),
+                        reverse=True,
+                    )
+                    raw_assets = []
+                    for release in releases:
+                        raw_assets = release.get("releaseAssets", {}).get("nodes")
+                        if raw_assets:
+                            break
+                else:
+                    raw_assets = []
 
-            if raw_assets:
-                logger.debug("Parsing asset records {}", raw_assets)
-                yield config, [convert(raw_asset, Asset) for raw_asset in raw_assets]
-            else:
-                logger.warning(
-                    "{}: Release {} has no downloadable assets",
-                    config.name,
-                    self.states[config.name].available.version,
-                )
+                if raw_assets:
+                    logger.debug("Parsing asset records {}", raw_assets)
+                    assets = [convert(raw_asset, Asset) for raw_asset in raw_assets]
+                else:
+                    logger.warning(
+                        "{}: Release {} has no downloadable assets",
+                        config.name,
+                        self.states[config.name].available.version,
+                    )
+                    assets = None
+            if assets is not None:
+                yield config, assets
         save_state(self.states)
 
     def installed(self, project: str | Project) -> Release | None:

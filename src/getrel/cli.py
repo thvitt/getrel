@@ -59,7 +59,9 @@ def prepare(
     """
     setup_logging(verbose, app.error_console)
 
-    app(tokens)
+    command_chain, *_ = app.parse_commands(tokens)
+    with logger.contextualize(command=" ".join(command_chain) or None):
+        app(tokens)
 
 
 @app.command(group=plumbing)
@@ -202,44 +204,45 @@ def check(projects: list[str] | None = None):
     projects = projects or list({*configs, *states})
 
     for project in projects:
-        if project not in configs:
-            logger.error("Project {} does not have a config", project)
-        if project not in states:
-            logger.info(
-                "No status known for project {}. Run {} update", project, app.name
-            )
-        else:
-            state = states[project]
-            with WorkingDirectory(state.project_dir):
-                if not state.installed and state.installed_files:
-                    logger.error(
-                        "Project {} is not installed, but has {} installed files: {}",
-                        project,
-                        len(state.installed_files or []),
-                        _ls_files(state.installed_files),
-                    )
-                if state.installed and not state.installed_files:
-                    logger.warning(
-                        "Project {} is installed, but has no installed files", project
-                    )
-                missing_files = [
-                    file for file in state.installed_files if not Path(file).exists()
-                ]
-                if missing_files:
-                    logger.error(
-                        "Project {}: {} files are marked as installed, but cannot be found: {}",
-                        project,
-                        len(missing_files),
-                        _ls_files(missing_files),
-                    )
-                extra_files = set(_all_files(Path())) - set(state.installed_files)
-                if extra_files:
-                    logger.warning(
-                        "Project {} has {} extra files in its project directory: {}",
-                        project,
-                        len(extra_files),
-                        _ls_files(extra_files),
-                    )
+        with logger.contextualize(project=project):
+            if project not in configs:
+                logger.error("Project {} does not have a config", project)
+            if project not in states:
+                logger.info(
+                    "No status known for project {}. Run {} update", project, app.name
+                )
+            else:
+                state = states[project]
+                with WorkingDirectory(state.project_dir):
+                    if not state.installed and state.installed_files:
+                        logger.error(
+                            "Project {} is not installed, but has {} installed files: {}",
+                            project,
+                            len(state.installed_files or []),
+                            _ls_files(state.installed_files),
+                        )
+                    if state.installed and not state.installed_files:
+                        logger.warning(
+                            "Project {} is installed, but has no installed files", project
+                        )
+                    missing_files = [
+                        file for file in state.installed_files if not Path(file).exists()
+                    ]
+                    if missing_files:
+                        logger.error(
+                            "Project {}: {} files are marked as installed, but cannot be found: {}",
+                            project,
+                            len(missing_files),
+                            _ls_files(missing_files),
+                        )
+                    extra_files = set(_all_files(Path())) - set(state.installed_files)
+                    if extra_files:
+                        logger.warning(
+                            "Project {} has {} extra files in its project directory: {}",
+                            project,
+                            len(extra_files),
+                            _ls_files(extra_files),
+                        )
 
 
 def _resolve_installed_file(file: Path, project_dir: Path) -> Path:
@@ -469,13 +472,14 @@ def repair(
     state_changed = False
 
     for project_name in projects:
-        if project_name not in states:
-            logger.info("No state for project {}", project_name)
-            continue
-        if _repair_project(
-            project_name, states[project_name], configs.get(project_name), ctx
-        ):
-            state_changed = True
+        with logger.contextualize(project=project_name):
+            if project_name not in states:
+                logger.info("No state for project {}", project_name)
+                continue
+            if _repair_project(
+                project_name, states[project_name], configs.get(project_name), ctx
+            ):
+                state_changed = True
 
     if state_changed and not dry_run:
         save_state(states)
@@ -627,17 +631,18 @@ def upgrade(
             description="Getting artefacts ...",
             total=len(projects),
         ):
-            try:
-                assets = list(manager.download(project, artefacts, client, progress))
-                manager.install_or_update(project, assets)
-                manager.states[project.name].installed = manager.states[
-                    project.name
-                ].available
-                save_state(manager.states)
-            except Exception as e:
-                logger.opt(exception=is_debug()).error(
-                    "Failed to install {}: {}", project.name, e
-                )
+            with logger.contextualize(project=project.name):
+                try:
+                    assets = list(manager.download(project, artefacts, client, progress))
+                    manager.install_or_update(project, assets)
+                    manager.states[project.name].installed = manager.states[
+                        project.name
+                    ].available
+                    save_state(manager.states)
+                except Exception as e:
+                    logger.opt(exception=is_debug()).error(
+                        "Failed to install {}: {}", project.name, e
+                    )
 
 
 @app.command(group=plumbing)
@@ -722,9 +727,10 @@ def uninstall(
     """
     manager = GithubProjectManager()
     for project in projects:
-        manager.uninstall(project, delete_assets=delete_assets)
-        if delete_config:
-            manager.delete_config(project)
+        with logger.contextualize(project=project):
+            manager.uninstall(project, delete_assets=delete_assets)
+            if delete_config:
+                manager.delete_config(project)
 
 
 @app.command(group=management)
