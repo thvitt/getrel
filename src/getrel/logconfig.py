@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 
@@ -6,6 +7,8 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.traceback import install as install_rich_traceback
 
+from getrel.config import get_state_path
+
 
 @dataclass
 class _State:
@@ -13,6 +16,42 @@ class _State:
 
 
 _state = _State()
+
+
+def _json_format(record) -> str:
+    """
+    Format function for the JSON log sink: serializes just the `record` dict
+    (as loguru's own `serialize=True` would put it under a "record" key),
+    without the redundant pre-rendered "text" field.
+
+    Dynamic format functions must return a fixed template, not pre-rendered
+    content: loguru parses the returned string for "<tag>" markup, which
+    breaks on arbitrary data (e.g. a message containing "<foo>"). So the
+    actual JSON is stashed in record["extra"] and only referenced by field
+    name here; the substitution happens after markup parsing.
+    """
+    exception = record["exception"]
+    if exception is not None:
+        exception = {
+            "type": None if exception.type is None else exception.type.__name__,
+            "value": exception.value,
+            "traceback": bool(exception.traceback),
+        }
+    entry = {
+        "time": record["time"].isoformat(),
+        "level": {"name": record["level"].name, "no": record["level"].no},
+        "message": record["message"],
+        "name": record["name"],
+        "module": record["module"],
+        "function": record["function"],
+        "line": record["line"],
+        "process": {"id": record["process"].id, "name": record["process"].name},
+        "thread": {"id": record["thread"].id, "name": record["thread"].name},
+        "exception": exception,
+        "extra": dict(record["extra"]),
+    }
+    record["extra"]["json_line"] = json.dumps(entry, default=str, ensure_ascii=False)
+    return "{extra[json_line]}\n"
 
 
 def setup_logging(verbose: int, console: Console) -> None:
@@ -27,13 +66,15 @@ def setup_logging(verbose: int, console: Console) -> None:
     logger.remove()
     logger.add(
         RichHandler(console=console, rich_tracebacks=_state.debug),
-        # a plain string format would have "\n{exception}" auto-appended, duplicating
-        # the traceback that RichHandler itself renders from the record's exc_info
-        format=lambda _record: "{message}",
+        format=lambda _: "{message}",
         filter={"": global_level, "getrel": local_level},
     )
-    if _state.debug:
-        install_rich_traceback(console=console, suppress=["cyclopts"])
+    logger.add(
+        get_state_path().parent.joinpath("log.jsonl"),
+        format=_json_format,
+        rotation="weekly",
+        compression="gz",
+    )
 
 
 def is_debug() -> bool:
