@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from importlib import import_module
-import logging
 import os
 import shlex
-from shutil import copyfileobj
 import subprocess
 import tarfile
 from abc import abstractmethod
 from datetime import datetime
 from fnmatch import fnmatch
 from functools import lru_cache
+from importlib import import_module
 from os import fspath
 from os.path import expandvars
 from pathlib import Path
 from platform import machine, processor
+from shutil import copyfileobj
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
 from sys import argv
 from tempfile import NamedTemporaryFile
@@ -24,7 +23,8 @@ from zipfile import BadZipFile, ZipFile
 
 import msgspec
 import xdg.BaseDirectory
-from logproc import OutputCallback, execute, proc_logger
+from logproc import OutputCallback, execute
+from loguru import logger
 from rich.text import Text
 from rich.tree import Tree
 
@@ -33,9 +33,18 @@ from getrel.utils import FileType, WorkingDirectory, field_names, first, unique
 if TYPE_CHECKING:
     from collections.abc import Callable, Container, Iterable
 
-logger = logging.getLogger(__name__)
-
 DATA_DIR = Path(xdg.BaseDirectory.xdg_data_home, "getrel")
+
+
+def _log_output(prefix: str = "", level: str = "WARNING") -> Callable[[str | bytes], None]:
+    """Creates a callback for `execute()` that logs each line to `logger`."""
+
+    def log(line: str | bytes) -> None:
+        if isinstance(line, bytes):
+            line = line.decode(errors="replace").rstrip()
+        logger.log(level, prefix + line)
+
+    return log
 
 
 class ConfigError(ValueError): ...
@@ -95,10 +104,10 @@ class BaseAction(
             if candidates is None:
                 if path.is_absolute():
                     result.extend(path.parent.glob(path.name))
-                    logger.debug(" ... abs: %s ~> %s", path, result)
+                    logger.debug(" ... abs: {} ~> {}", path, result)
                 else:
                     result.extend(Path().glob(fspath(path)))
-                    logger.debug(" ... rel: %s ~> %s", path, result)
+                    logger.debug(" ... rel: {} ~> {}", path, result)
             else:
                 result.extend(
                     cand for cand in candidates if fnmatch(str(cand), str(path))
@@ -109,7 +118,7 @@ class BaseAction(
     def sources(self) -> list[Path]:
         result = list(self.expand_source())
         logger.debug(
-            "%s: sources %s ~> %s (in %s)",
+            "{}: sources {} ~> {} (in {})",
             self.__class__.__name__,
             self.source,
             result,
@@ -186,7 +195,7 @@ class UnpackAction(BaseAction):
                             continue
                         except Exception as zstd_error:
                             logger.error(
-                                "Failed to unpack %s with zstd: %s", source, zstd_error
+                                "Failed to unpack {} with zstd: {}", source, zstd_error
                             )
                     # now the last resort: not a tar archive, but a directly packed single file.
                     for method in ["gzip", "bz2", "lzma", "compression.zstd"]:
@@ -204,7 +213,7 @@ class UnpackAction(BaseAction):
                         f" - {m}: {e!r}" for m, e in errors.items()
                     )
                     logger.error(
-                        "Failed to unpack %s: %s, %s and %s",
+                        "Failed to unpack {}: {}, {} and {}",
                         source,
                         zip_error,
                         tar_error,
@@ -268,31 +277,31 @@ class AbstractLinkAction(BaseAction):
             if link_path.is_symlink():
                 if link_path.readlink().resolve() == final_path.resolve():
                     logger.info(
-                        "Recreating symbolic link %s to %s", link_path, final_path
+                        "Recreating symbolic link {} to {}", link_path, final_path
                     )
                 else:
                     level = (
-                        logging.INFO
+                        "INFO"
                         if final_path.readlink()
                         .resolve()
                         .is_relative_to(Path().absolute())
-                        else logging.WARNING
+                        else "WARNING"
                     )
                     logger.log(
                         level,
-                        "Creating symbolic link %s to %s, overwriting existing link to %s",
+                        "Creating symbolic link {} to {}, overwriting existing link to {}",
                         link_path,
                         final_path,
                         link_path.readlink(),
                     )
             else:  # no symlink
                 logger.warning(
-                    "Overwriting regular file %s with a symbolic link to %s",
+                    "Overwriting regular file {} with a symbolic link to {}",
                     link_path,
                     final_path,
                 )
         else:
-            logger.debug("Creating symbolic link %s to %s", link_path, final_path)
+            logger.debug("Creating symbolic link {} to {}", link_path, final_path)
         link_path.unlink(missing_ok=True)
         link_path.symlink_to(final_path)
         project_files.append(link_path)
@@ -347,7 +356,7 @@ def path_recorder(
     files: list[Path], fallback: OutputCallback | None = None
 ) -> Callable[[str | bytes], None]:
     if fallback is None:
-        fallback = proc_logger()
+        fallback = _log_output()
 
     def recorder(line: str | bytes) -> None:
         if isinstance(line, bytes):
@@ -393,9 +402,7 @@ class ScriptAction(BaseAction):
                 args,
                 stdout=path_recorder(
                     project_files,
-                    fallback=proc_logger(
-                        prefix=args[0], level=logging.WARNING, logger=logger
-                    ),
+                    fallback=_log_output(prefix=args[0]),
                 ),
             )
         elif self.script is not None and self.script.strip().startswith("#!"):
@@ -407,11 +414,7 @@ class ScriptAction(BaseAction):
                 cmd,
                 stdout=path_recorder(
                     project_files,
-                    fallback=proc_logger(
-                        prefix=shlex.split(self.script)[0],
-                        level=logging.WARNING,
-                        logger=logger,
-                    ),
+                    fallback=_log_output(prefix=shlex.split(self.script)[0]),
                 ),
             )
 
@@ -427,9 +430,7 @@ class ScriptAction(BaseAction):
                 [fspath(script_path)],
                 stdout=path_recorder(
                     project_files,
-                    fallback=proc_logger(
-                        prefix=script_file.name, level=logging.WARNING, logger=logger
-                    ),
+                    fallback=_log_output(prefix=script_file.name),
                 ),
             )
 
@@ -526,7 +527,7 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
                 try:
                     action(state.installed_files)
                 except Exception as e:
-                    logger.warning("%s: %s: %s", self.name, action, e)
+                    logger.warning("{}: {}: {}", self.name, action, e)
                     install_errors.append(e)
             if install_errors:
                 raise ExceptionGroup(
@@ -560,12 +561,12 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         """
         with WorkingDirectory(state.project_dir):
             for action in self.uninstall:
-                logger.debug("Running uninstall action: %s", action)
+                logger.debug("Running uninstall action: {}", action)
                 action(state.installed_files)
             remaining = []
             for file in reversed(state.installed_files):
                 if (self.is_asset(file) and not delete_assets) or file in keep:
-                    logger.debug("Not uninstalling asset %s", file)
+                    logger.debug("Not uninstalling asset {}", file)
                     remaining.append(file)
                 else:
                     try:
@@ -573,16 +574,12 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
                             file.rmdir()
                         else:
                             file.unlink()
-                        logger.debug("Uninstalling %s: Removed %s", self.name, file)
+                        logger.debug("Uninstalling {}: Removed {}", self.name, file)
                     except OSError as e:
-                        level = (
-                            logging.INFO
-                            if isinstance(e, FileNotFoundError)
-                            else logging.WARNING
-                        )
+                        level = "INFO" if isinstance(e, FileNotFoundError) else "WARNING"
                         logger.log(
                             level,
-                            "Uninstalling %s: Could not delete %s (%s)",
+                            "Uninstalling {}: Could not delete {} ({})",
                             self.name,
                             file,
                             e,

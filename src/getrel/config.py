@@ -1,15 +1,13 @@
-import logging
 from pathlib import Path
 
 import msgspec
 import xdg.BaseDirectory
-from msgspec.json import decode
+from loguru import logger
 from msgspec import DecodeError
+from msgspec.json import decode
 
 from getrel.actions import GithubProject, ProjectState
 from getrel.utils import dec_hook, enc_hook
-
-logger = logging.getLogger()
 
 
 def load_project_configs():
@@ -18,7 +16,7 @@ def load_project_configs():
         try:
             yield GithubProject.load(config_file)
         except DecodeError as e:
-            logger.error("Cannot load config %s, skipping: %s", config_file, e)
+            logger.error("Cannot load config {}, skipping: {}", config_file, e)
 
 
 def load_project_config(name: str):

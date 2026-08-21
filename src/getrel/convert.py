@@ -2,23 +2,20 @@
 Migration code from previous getrel versions.
 """
 
-import logging
 import tomllib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 from pprint import pformat
 from sys import exc_info
+from urllib.parse import urlparse
 
 import msgspec
 import xdg.BaseDirectory
+from loguru import logger
 
 from getrel.config import first_config_path
-
-logger = logging.getLogger(__name__)
-
-
-from urllib.parse import urlparse
+from getrel.logconfig import is_debug
 
 from .actions import (
     Action,
@@ -86,7 +83,7 @@ def convert_file(old_config: Path, output: Path):
     with old_config.open("rb") as f:
         old_projects = tomllib.load(f)
     logger.info(
-        "Converting %d projects from %s to %s", len(old_projects), old_config, output
+        "Converting {} projects from {} to {}", len(old_projects), old_config, output
     )
     output.mkdir(exist_ok=True, parents=True)
     for name, project in old_projects.items():
@@ -94,7 +91,7 @@ def convert_file(old_config: Path, output: Path):
 
         outpath = output.joinpath(name).with_suffix(".yaml")
         logger.info(
-            "Writing project %s (%d install actions) to %s",
+            "Writing project {} ({} install actions) to {}",
             new_project.name,
             len(new_project.install),
             outpath,
@@ -113,11 +110,13 @@ def convert_state(state_dir: Path) -> ProjectState:
         )
     except Exception as e:
         logger.warning(
-            "Error retrieving installed version for %s: %s. Treating as not installed.",
+            "Error retrieving installed version for {}: {}. Treating as not installed.",
             name,
             e,
         )
-        logger.debug("%s", pformat(old_state, depth=2, sort_dicts=False), exc_info=True)
+        logger.opt(exception=True).debug(
+            "{}", pformat(old_state, depth=2, sort_dicts=False)
+        )
         installed = None
 
     old_releases = None
@@ -135,11 +134,11 @@ def convert_state(state_dir: Path) -> ProjectState:
         )
     except Exception as e:
         logger.warning(
-            "Error retrieving candidate version for %s: %s. Will need update", name, e
+            "Error retrieving candidate version for {}: {}. Will need update", name, e
         )
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "%s", pformat(old_releases, depth=3, sort_dicts=False), exc_info=True
+        if is_debug():
+            logger.opt(exception=True).debug(
+                "{}", pformat(old_releases, depth=3, sort_dicts=False)
             )
         available = None
 
@@ -147,7 +146,7 @@ def convert_state(state_dir: Path) -> ProjectState:
     if config_file is not None and config_file.exists():
         configured = datetime.fromtimestamp(config_file.stat().st_mtime)
     else:
-        logger.warning("No config file for %s", name)
+        logger.warning("No config file for {}", name)
         configured = None
 
     return ProjectState(

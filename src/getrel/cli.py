@@ -1,5 +1,4 @@
 import dataclasses
-import logging
 import os
 import shlex
 import shutil
@@ -14,15 +13,14 @@ import httpx
 import xdg.BaseDirectory
 from cyclopts import App, Parameter, validators
 from cyclopts.group import Group
+from loguru import logger
 from msgspec import yaml
 from rich import get_console
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.progress import DownloadColumn, Progress, track
 from rich.table import Column, Table
 from rich.text import Text
-from rich.traceback import install as install_rich_traceback
 
 from getrel.actions import BinAction, Project, ProjectState, Settings, write_schemas
 from getrel.add import PreferenceScores, identifying_pattern
@@ -36,9 +34,8 @@ from getrel.config import (
 )
 from getrel.convert import convert_file, convert_state
 from getrel.github import GithubProjectManager
+from getrel.logconfig import is_debug, setup_logging
 from getrel.utils import WorkingDirectory, enc_hook, unique
-
-logger = logging.getLogger(__name__)
 
 app = App(verbose=False)
 app.register_install_completion_command(add_to_startup=False)
@@ -60,20 +57,7 @@ def prepare(
     Args:
         verbose: Report what is done. Repeatable for increasing amount of debugging info.
     """
-    global_level = logging.WARNING - (verbose // 2) * 10
-    local_level = logging.WARNING - ((verbose + 1) // 2 * 10)
-    logging.basicConfig(
-        format="%(message)s (%(name)s)",
-        handlers=[
-            RichHandler(
-                console=app.error_console, rich_tracebacks=local_level <= logging.DEBUG
-            )
-        ],
-    )
-    if local_level <= logging.DEBUG:
-        install_rich_traceback(console=app.error_console, suppress=["cyclopts"])
-    logging.getLogger().setLevel(global_level)
-    logging.getLogger("getrel").setLevel(local_level)
+    setup_logging(verbose, app.error_console)
 
     app(tokens)
 
@@ -110,7 +94,7 @@ def convert_old_state():
                 state = convert_state(project / ".getrel")
                 states[name] = state
             except Exception as e:
-                logger.error("Failed to read state for %s: %s", name, e)
+                logger.error("Failed to read state for {}: {}", name, e)
     save_state(states)
 
 
@@ -219,31 +203,31 @@ def check(projects: list[str] | None = None):
 
     for project in projects:
         if project not in configs:
-            logger.error("Project %s does not have a config", project)
+            logger.error("Project {} does not have a config", project)
         if project not in states:
             logger.info(
-                "No status known for project %s. Run %s update", project, app.name
+                "No status known for project {}. Run {} update", project, app.name
             )
         else:
             state = states[project]
             with WorkingDirectory(state.project_dir):
                 if not state.installed and state.installed_files:
                     logger.error(
-                        "Project %s is not installed, but has %d installed files: %s",
+                        "Project {} is not installed, but has {} installed files: {}",
                         project,
                         len(state.installed_files or []),
                         _ls_files(state.installed_files),
                     )
                 if state.installed and not state.installed_files:
                     logger.warning(
-                        "Project %s is installed, but has no installed files", project
+                        "Project {} is installed, but has no installed files", project
                     )
                 missing_files = [
                     file for file in state.installed_files if not Path(file).exists()
                 ]
                 if missing_files:
                     logger.error(
-                        "Project %s: %d files are marked as installed, but cannot be found: %s",
+                        "Project {}: {} files are marked as installed, but cannot be found: {}",
                         project,
                         len(missing_files),
                         _ls_files(missing_files),
@@ -251,7 +235,7 @@ def check(projects: list[str] | None = None):
                 extra_files = set(_all_files(Path())) - set(state.installed_files)
                 if extra_files:
                     logger.warning(
-                        "Project %s has %d extra files in its project directory: %s",
+                        "Project {} has {} extra files in its project directory: {}",
                         project,
                         len(extra_files),
                         _ls_files(extra_files),
@@ -486,7 +470,7 @@ def repair(
 
     for project_name in projects:
         if project_name not in states:
-            logger.info("No state for project %s", project_name)
+            logger.info("No state for project {}", project_name)
             continue
         if _repair_project(
             project_name, states[project_name], configs.get(project_name), ctx
@@ -536,7 +520,7 @@ def ls(project: str | None = None):
         summary = states[project].summarize_directory(config)
         get_console().print(summary)
     else:
-        logger.error("Project %s is not installed", project)
+        logger.error("Project {} is not installed", project)
 
 
 @app.command(group=management)
@@ -651,11 +635,8 @@ def upgrade(
                 ].available
                 save_state(manager.states)
             except Exception as e:
-                logger.error(
-                    "Failed to install %s: %s",
-                    project.name,
-                    e,
-                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                logger.opt(exception=is_debug()).error(
+                    "Failed to install {}: {}", project.name, e
                 )
 
 
@@ -754,7 +735,7 @@ def clean_state(dry_run: bool = False):
     unconfigured = set(state) - set(configs)
     if unconfigured:
         logger.warning(
-            "The following projects no longer have a configuration file, their state will be removed %s",
+            "The following projects no longer have a configuration file, their state will be removed {}",
             ", ".join(unconfigured),
         )
         for name in unconfigured:

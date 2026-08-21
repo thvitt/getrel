@@ -1,5 +1,4 @@
 import fnmatch
-import logging
 import os
 import re
 from collections.abc import Callable, Iterable
@@ -12,6 +11,7 @@ from typing import Literal, Self
 
 import msgspec
 from httpx import Client
+from loguru import logger
 from msgspec import Struct
 from rich.progress import Progress
 
@@ -19,8 +19,6 @@ from getrel.actions import BinAction, LinkAction, Settings, UnpackAction
 from getrel.config import save_state
 from getrel.github import Asset, GithubProjectManager
 from getrel.utils import FileType, WorkingDirectory, field_names, first, unique
-
-logger = logging.getLogger(__name__)
 
 
 class NoPatternError(ValueError): ...
@@ -69,7 +67,7 @@ class ScoredAsset(Struct):
     def score_assets(
         cls, assets: Iterable[Asset], scorer: PreferenceScores, settings: Settings
     ):
-        logger.debug("Scoring assets %s using scorer %s", assets, scorer)
+        logger.debug("Scoring assets {} using scorer {}", assets, scorer)
         scores = [
             cls(asset, scorer.rate(scorer.assets, asset, settings)) for asset in assets
         ]
@@ -127,7 +125,7 @@ def identifying_pattern(
                         f'Could not generate a match pattern. The candidate, "{pattern}" (as "{p}"), matches {len(matching_alternatives)} alternatives: {matching_alternatives}'
                     )
             logger.debug(
-                "Pattern %s matches selection %s, but not alternatives %s",
+                "Pattern {} matches selection {}, but not alternatives {}",
                 pattern,
                 selection,
                 alternatives,
@@ -238,14 +236,14 @@ def mask_architecture(name: str, settings: Settings) -> str:
 
 def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
     scorer = PreferenceScores.load()
-    logger.debug("Asset scorer: %s", scorer)
+    logger.debug("Asset scorer: {}", scorer)
     settings = Settings.load()
     manager = GithubProjectManager()
     project, state, assets_ = manager.prepare_project(url, prerelease=prerelease)
-    logger.debug("Project: %s, State: %s, Assets: %s", project, state, assets_)
+    logger.debug("Project: {}, State: {}, Assets: {}", project, state, assets_)
     assets = ScoredAsset.score_assets(assets_, scorer, settings)
     top = _top_scored(assets, key=lambda s: s.score)
-    logger.debug("Top assets: %s", top)
+    logger.debug("Top assets: {}", top)
     project.download = [
         identifying_pattern(
             [a.asset.name for a in top],
@@ -262,7 +260,7 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
         file_idx = len(state.installed_files)
         downloaded_files = list(manager.download(project, assets_, client, progress))
         logger.debug(
-            "Downloaded files: %s, from asset list: %s", downloaded_files, assets_
+            "Downloaded files: {}, from asset list: {}", downloaded_files, assets_
         )
 
         new_files = list(downloaded_files)
@@ -281,7 +279,7 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                 except ValueError:
                     rel_path = file_path
 
-                logger.debug("Analyzing %s ...", rel_path)
+                logger.debug("Analyzing {} ...", rel_path)
                 filetype = FileType(rel_path)
 
                 for rule in settings.add_rules:
@@ -322,7 +320,7 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                             binary_count += 1
                         else:
                             logger.warning(
-                                "Sanity limit reached: skipping BinAction for %s",
+                                "Sanity limit reached: skipping BinAction for {}",
                                 file_path.name,
                             )
 
@@ -332,11 +330,11 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                             action.source, state.available.version
                         )
                     action.source = mask_architecture(action.source, settings)
-                    logger.debug("Added %s for %s", action, file)
+                    logger.debug("Added {} for {}", action, file)
                     project.install.append(action)
                     action_created_files = []  # FIXME should pass list of all files
                     action(action_created_files)
-                    logger.debug("… created files: %s", action_created_files)
+                    logger.debug("… created files: {}", action_created_files)
 
                     if state.installed_files is None:
                         state.installed_files = []
@@ -346,8 +344,8 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                         if new_f.is_relative_to(Path.cwd()):
                             new_files.append(new_f)
                 else:
-                    logger.debug("No suitable action for %s", file)
+                    logger.debug("No suitable action for {}", file)
             config_yaml = project.save()
-            logger.info("Final project config:\n%s", config_yaml.decode())
-            logger.debug("Final project state: %s", state)
+            logger.info("Final project config:\n{}", config_yaml.decode())
+            logger.debug("Final project state: {}", state)
             save_state(manager.states)

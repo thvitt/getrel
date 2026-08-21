@@ -1,4 +1,3 @@
-import logging
 import os
 from collections.abc import Container, Iterable, Sequence
 from datetime import datetime
@@ -10,14 +9,13 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from httpx import Client
+from loguru import logger
 from msgspec import Struct, convert
 from rich.progress import Progress
 
 from getrel.actions import GithubProject, Project, ProjectState, Release, Settings
 from getrel.config import load_project_configs, load_project_states, save_state
 from getrel.utils import WorkingDirectory, double_braces, first, split_list
-
-logger = logging.getLogger(__name__)
 
 GRAPHQL_API = "https://api.github.com/graphql"
 
@@ -55,7 +53,7 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
 
     """
     logger.debug(
-        "Preparing query from %s, using %d projects (%s)",
+        "Preparing query from {}, using {} projects ({})",
         query,
         len(projects),
         projects,
@@ -73,12 +71,12 @@ def run_queries(projects: Sequence[GithubProject], query: str, chunk_size: int =
                 + "\n".join(queries[chunk_start : chunk_start + chunk_size])
                 + "}"
             )
-            # logger.debug("GraphQL Query: %s", query)
+            # logger.debug("GraphQL Query: {}", query)
             response = client.post(GRAPHQL_API, json={"query": query})
             response.raise_for_status()
             answer = response.json()
             if "errors" in answer:
-                logger.error("Chunk %d: %s", chunk_start, pformat(answer))
+                logger.error("Chunk {}: {}", chunk_start, pformat(answer))
             if "data" in answer:
                 for project_id, data in answer["data"].items():
                     project = projects[int(project_id[1:])]
@@ -92,7 +90,7 @@ def _split_github_url(url: str) -> tuple[str, str]:
     parts = parsed.path.split("/")
     if not parts[0]:
         parts = parts[1:]
-    logger.debug("Split %s to %s", url, parts)
+    logger.debug("Split {} to {}", url, parts)
     return parts[0], parts[1]
 
 
@@ -120,7 +118,7 @@ class GithubProjectManager:
         """
         if project not in self.states:
             self.states[project] = state = ProjectState(project)
-            logger.debug("No known state for %s, creating one", project)
+            logger.debug("No known state for {}, creating one", project)
         else:
             state = self.states[project]
         state.description = result.get("description", state.description)
@@ -146,7 +144,7 @@ class GithubProjectManager:
             )
             if state.available and latest_release > state.available:
                 logger.info(
-                    "%s: New release %s (%s)",
+                    "{}: New release {} ({})",
                     project,
                     latest_release.version,
                     latest_release.published.isoformat(),
@@ -155,7 +153,7 @@ class GithubProjectManager:
                 return True
             elif state.available is None:
                 logger.info(
-                    "%s: Release %s available (%s)",
+                    "{}: Release {} available ({})",
                     project,
                     latest_release.version,
                     latest_release.published.isoformat(),
@@ -163,7 +161,7 @@ class GithubProjectManager:
                 state.available = latest_release
                 return True
         else:
-            logger.warning("%s does not have a release.", project)
+            logger.warning("{} does not have a release.", project)
         return False
 
     def look_for_new_versions(
@@ -230,7 +228,7 @@ class GithubProjectManager:
         if projects_or_names is None:
             projects = self.updateable_projects()
             configs = [self.configs[name] for name in projects]
-            logger.debug("Selected all updateble projects: %s", projects)
+            logger.debug("Selected all updateble projects: {}", projects)
         elif projects_or_names and isinstance(projects_or_names[0], GithubProject):
             configs = cast("list[GithubProject]", projects_or_names)
             projects = [config.name for config in configs]  # pyright: ignore[reportAttributeAccessIssue]
@@ -239,7 +237,7 @@ class GithubProjectManager:
             configs = [self.configs[name] for name in projects if name in self.configs]
             projects = [config.name for config in configs]
         logger.info(
-            "Fetching release info for %d projects: %s",
+            "Fetching release info for {} projects: {}",
             len(projects),
             " ".join(projects),
         )
@@ -308,11 +306,11 @@ class GithubProjectManager:
                 raw_assets = []
 
             if raw_assets:
-                logger.debug("Parsing asset records %s", raw_assets)
+                logger.debug("Parsing asset records {}", raw_assets)
                 yield config, [convert(raw_asset, Asset) for raw_asset in raw_assets]
             else:
                 logger.warning(
-                    "%s: Release %s has no downloadable assets",
+                    "{}: Release {} has no downloadable assets",
                     config.name,
                     self.states[config.name].available.version,
                 )
@@ -359,8 +357,8 @@ class GithubProjectManager:
                 save_state(self.states)
                 if state.installed_files:
                     logger.warning(
-                        "For %s, no configuration was found. %d files outside of the project directory %s have been removed, "
-                        "%d files remain in the project directory. Rerun with --delete-assets to remove them, as well.",
+                        "For {}, no configuration was found. {} files outside of the project directory {} have been removed, "
+                        "{} files remain in the project directory. Rerun with --delete-assets to remove them, as well.",
                         project,
                         pd,
                         len(deleted),
@@ -368,8 +366,8 @@ class GithubProjectManager:
                     )
                 else:
                     logger.warning(
-                        "For %s, no configuration was found. All %d files have been removed, "
-                        "the project directory %s and the state will be cleared as well.",
+                        "For {}, no configuration was found. All {} files have been removed, "
+                        "the project directory {} and the state will be cleared as well.",
                         project,
                         len(deleted),
                         pd,
@@ -378,14 +376,14 @@ class GithubProjectManager:
                     del self.states[project]
                     save_state(self.states)
             else:
-                logger.error("Unknown project: %s", project)
+                logger.error("Unknown project: {}", project)
 
     def delete_config(self, project: GithubProject | str):
         if isinstance(project, str):
             if project in self.configs:
                 project = self.configs[project]
             else:
-                logger.error("No project configuration for project %s", project)
+                logger.error("No project configuration for project {}", project)
                 return
         assert isinstance(project, GithubProject)
         project.project_file.unlink(missing_ok=True)
@@ -415,7 +413,7 @@ class GithubProjectManager:
                 )
             ]
             logger.info(
-                "%s: %d of %d artefacts: %s",
+                "{}: {} of {} artefacts: {}",
                 project.name,
                 len(selected_assets),
                 len(list(assets)),
