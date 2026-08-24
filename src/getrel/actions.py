@@ -15,7 +15,7 @@ from pathlib import Path
 from platform import machine, processor
 from shutil import copyfileobj
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
-from sys import argv
+from sys import argv, exc_info
 from tempfile import NamedTemporaryFile
 from textwrap import indent
 from typing import TYPE_CHECKING, Literal, Self, overload
@@ -36,7 +36,9 @@ if TYPE_CHECKING:
 DATA_DIR = Path(xdg.BaseDirectory.xdg_data_home, "getrel")
 
 
-def _log_output(prefix: str = "", level: str = "WARNING") -> Callable[[str | bytes], None]:
+def _log_output(
+    prefix: str = "", level: str = "WARNING"
+) -> Callable[[str | bytes], None]:
     """Creates a callback for `execute()` that logs each line to `logger`."""
 
     def log(line: str | bytes) -> None:
@@ -156,69 +158,76 @@ class UnpackAction(BaseAction):
 
     def __call__(self, project_files: list[Path]) -> None:
         for source in self.sources:
-            try:
-                with ZipFile(source) as archive:
-                    members = [
-                        name
-                        for name in archive.namelist()
-                        if name is not None
-                        and not (name.startswith("/") or name.startswith("../"))
-                    ]
-                    archive.extractall(self.destination, members)
-                    dests = Settings.load().expand(self.destination or Path.cwd())
-                    project_files.extend(
-                        dest.joinpath(member).absolute()
-                        for member in members
-                        for dest in dests
-                    )
-            except BadZipFile as zip_error:
+            with logger.contextualize(source=self.source, destination=self.destination):
                 try:
-                    with tarfile.open(source) as archive:
-                        archive.extractall(
-                            fspath(self.destination or "."),
-                            filter=self._make_record_tar_filter(project_files),
+                    with ZipFile(source) as archive:
+                        members = [
+                            name
+                            for name in archive.namelist()
+                            if name is not None
+                            and not (name.startswith("/") or name.startswith("../"))
+                        ]
+                        archive.extractall(self.destination, members)
+                        dests = Settings.load().expand(self.destination or Path.cwd())
+                        project_files.extend(
+                            dest.joinpath(member).absolute()
+                            for member in members
+                            for dest in dests
                         )
-                except tarfile.ReadError as tar_error:
-                    if source.suffix == ".zst" or source.name.endswith(".tar.zst"):
-                        try:
-                            with (
-                                subprocess.Popen(
-                                    ["zstd", "-dc", fspath(source)],
-                                    stdout=subprocess.PIPE,
-                                ) as proc,
-                                tarfile.open(fileobj=proc.stdout, mode="r|") as archive,
-                            ):
-                                archive.extractall(
-                                    fspath(self.destination or "."),
-                                    filter=self._make_record_tar_filter(project_files),
-                                )
-                            continue
-                        except Exception as zstd_error:
-                            logger.error(
-                                "Failed to unpack {} with zstd: {}", source, zstd_error
+                except BadZipFile as zip_error:
+                    try:
+                        with tarfile.open(source) as archive:
+                            archive.extractall(
+                                fspath(self.destination or "."),
+                                filter=self._make_record_tar_filter(project_files),
                             )
-                    # now the last resort: not a tar archive, but a directly packed single file.
-                    for method in ["gzip", "bz2", "lzma", "compression.zstd"]:
-                        errors: dict[str, Exception] = {}
-                        try:
-                            compressor = import_module(method)
-                            with compressor.open(source, "r") as archive:  # noqa: SIM117
-                                with source.with_suffix("").open("wb") as unpacked:
-                                    copyfileobj(archive, unpacked)
-                                    project_files.append(source.with_suffix(""))
-                                    return
-                        except Exception as e:
-                            errors[method] = e
-                    uncompress_msg = "could not uncompress:\n" + "\n".join(
-                        f" - {m}: {e!r}" for m, e in errors.items()
-                    )
-                    logger.error(
-                        "Failed to unpack {}: {}, {} and {}",
-                        source,
-                        zip_error,
-                        tar_error,
-                        ExceptionGroup(uncompress_msg, list(errors.values())),
-                    )
+                    except tarfile.ReadError as tar_error:
+                        if source.suffix == ".zst" or source.name.endswith(".tar.zst"):
+                            try:
+                                with (
+                                    subprocess.Popen(
+                                        ["zstd", "-dc", fspath(source)],
+                                        stdout=subprocess.PIPE,
+                                    ) as proc,
+                                    tarfile.open(
+                                        fileobj=proc.stdout, mode="r|"
+                                    ) as archive,
+                                ):
+                                    archive.extractall(
+                                        fspath(self.destination or "."),
+                                        filter=self._make_record_tar_filter(
+                                            project_files
+                                        ),
+                                    )
+                                continue
+                            except Exception as zstd_error:
+                                logger.error(
+                                    "Failed to unpack {} with zstd: {}",
+                                    source,
+                                    zstd_error,
+                                )
+                        # now the last resort: not a tar archive, but a directly packed single file.
+                        for method in ["gzip", "bz2", "lzma", "compression.zstd"]:
+                            errors: dict[str, Exception] = {}
+                            try:
+                                compressor = import_module(method)
+                                with compressor.open(source, "r") as archive:  # noqa: SIM117
+                                    with source.with_suffix("").open("wb") as unpacked:
+                                        copyfileobj(archive, unpacked)
+                                        project_files.append(source.with_suffix(""))
+                                        return
+                            except Exception as e:
+                                errors[method] = e
+                        uncompress_msg = "could not uncompress:\n" + "\n".join(
+                            f" - {m}: {e!r}" for m, e in errors.items()
+                        )
+                        logger.error(
+                            "Failed to unpack {}: {}, {} and {}",
+                            source,
+                            zip_error,
+                            tar_error,
+                            ExceptionGroup(uncompress_msg, list(errors.values())),
+                        )
 
     def __str__(self) -> str:
         return f"unpack the archive `{self.source}` to `{self.destination or 'the project directory'}`"
@@ -317,7 +326,8 @@ class LinkAction(AbstractLinkAction):
     def __call__(self, project_files: list[Path]) -> None:
         link_dir = self._prepare_linkdir(project_files)
         for source in self.sources:
-            self._create_link(source, link_dir, project_files)
+            with logger.contextualize(source=source, destination=link_dir):
+                self._create_link(source, link_dir, project_files)
 
     def __str__(self) -> str:
         return f"create {'an absolute' if self.absolute else 'a'} symbolic link to `{self.source}` at `{self.link}`"
@@ -340,13 +350,14 @@ class BinAction(AbstractLinkAction):
         link_dir = self._prepare_linkdir(project_files)
         bin_ = None if self.bin is None else first(Settings.load().expand(self.bin))
         for source in self.sources:
-            source.chmod(source.stat().st_mode | S_IXUSR | S_IXGRP | S_IXOTH)
-            if bin_ is None:
-                self._create_link(source, link_dir, project_files)
-            elif bin_.is_absolute():
-                self._create_link(source, bin_, project_files)
-            else:
-                self._create_link(source, link_dir / bin_, project_files)
+            with logger.contextualize(source=source, destination=bin_):
+                source.chmod(source.stat().st_mode | S_IXUSR | S_IXGRP | S_IXOTH)
+                if bin_ is None:
+                    self._create_link(source, link_dir, project_files)
+                elif bin_.is_absolute():
+                    self._create_link(source, bin_, project_files)
+                else:
+                    self._create_link(source, link_dir / bin_, project_files)
 
     def __str__(self) -> str:
         return f"link the binary or binaries matching `{self.source}`"
@@ -521,14 +532,24 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
         """
         Run all configured install actions.
         """
-        with WorkingDirectory(state.project_dir), logger.contextualize(project=self.name):
+        with (
+            WorkingDirectory(state.project_dir),
+            logger.contextualize(project=self.name),
+        ):
             install_errors = []
             for action in self.install:
-                with logger.contextualize(action=str(action)):
+                with logger.contextualize(
+                    action=_actiontag(action.__class__.__name__), task=str(action)
+                ):
                     try:
                         action(state.installed_files)
                     except Exception as e:
-                        logger.warning("{}: {}: {}", self.name, action, e)
+                        logger.opt(exception=True).debug(
+                            "{}: {}: {}",
+                            self.name,
+                            action,
+                            e,
+                        )
                         install_errors.append(e)
             if install_errors:
                 raise ExceptionGroup(
@@ -560,7 +581,10 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
             delete_assets: If True, also delete downloaded assets.
             keep: Paths to files that should not be deleted.
         """
-        with WorkingDirectory(state.project_dir), logger.contextualize(project=self.name):
+        with (
+            WorkingDirectory(state.project_dir),
+            logger.contextualize(project=self.name),
+        ):
             for action in self.uninstall:
                 with logger.contextualize(action=str(action)):
                     logger.debug("Running uninstall action: {}", action)
@@ -578,7 +602,9 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
                             file.unlink()
                         logger.debug("Uninstalling {}: Removed {}", self.name, file)
                     except OSError as e:
-                        level = "INFO" if isinstance(e, FileNotFoundError) else "WARNING"
+                        level = (
+                            "INFO" if isinstance(e, FileNotFoundError) else "WARNING"
+                        )
                         logger.log(
                             level,
                             "Uninstalling {}: Could not delete {} ({})",

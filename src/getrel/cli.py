@@ -223,10 +223,13 @@ def check(projects: list[str] | None = None):
                         )
                     if state.installed and not state.installed_files:
                         logger.warning(
-                            "Project {} is installed, but has no installed files", project
+                            "Project {} is installed, but has no installed files",
+                            project,
                         )
                     missing_files = [
-                        file for file in state.installed_files if not Path(file).exists()
+                        file
+                        for file in state.installed_files
+                        if not Path(file).exists()
                     ]
                     if missing_files:
                         logger.error(
@@ -633,7 +636,9 @@ def upgrade(
         ):
             with logger.contextualize(project=project.name):
                 try:
-                    assets = list(manager.download(project, artefacts, client, progress))
+                    assets = list(
+                        manager.download(project, artefacts, client, progress)
+                    )
                     manager.install_or_update(project, assets)
                     manager.states[project.name].installed = manager.states[
                         project.name
