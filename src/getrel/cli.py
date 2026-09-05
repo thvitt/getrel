@@ -686,12 +686,59 @@ def dump_assets(projects: list[str] | None = None):
     print(yaml.encode(result, enc_hook=enc_hook).decode())
 
 
+def _select_latest_assets(project_dir: Path, config: Project) -> list[Path]:
+    """
+    For each of the project's download patterns, picks the most recently
+    modified matching file present in the project directory. A directory may
+    hold leftovers from more than one previously downloaded version.
+    """
+    settings = Settings.load()
+    candidates = [f for f in project_dir.iterdir() if f.is_file()]
+    chosen: dict[Path, None] = {}
+    for pattern in config.download:
+        exp_pats = settings.expand_arch(pattern)
+        matches = [
+            f for f in candidates if any(fnmatch(f.name, exp) for exp in exp_pats)
+        ]
+        if matches:
+            chosen[max(matches, key=lambda f: f.stat().st_mtime)] = None
+    return list(chosen)
+
+
+def _install_offline_project(
+    name: str, config: Project, manager: GithubProjectManager
+) -> bool:
+    """
+    Installs a project from artefacts already present in its project directory,
+    without downloading anything. Returns True if the state was changed.
+    """
+    state = manager.states.setdefault(name, ProjectState(name))
+    project_dir = state.project_dir
+    if not project_dir.exists():
+        logger.warning(
+            "{}: project directory {} does not exist, skipping", name, project_dir
+        )
+        return False
+    assets = _select_latest_assets(project_dir, config)
+    if not assets:
+        logger.warning(
+            "{}: no matching artefacts found in {}, skipping", name, project_dir
+        )
+        return False
+    state.installed_files = [a.relative_to(project_dir) for a in assets]
+    config.do_install(state)
+    state.installed_files = list(unique(state.installed_files))
+    logger.info("{}: installed offline from {} artefact(s)", name, len(assets))
+    return True
+
+
 @app.command(group=management)
 def install(
     projects: list[str] | None = None,
     /,
     *,
     missing: Annotated[bool, Parameter(alias="-m", negative=())] = False,
+    offline: Annotated[bool, Parameter(alias="-o", negative=())] = False,
 ):
     """
     Install the given (or all missing) projects.
@@ -699,6 +746,9 @@ def install(
     Args:
         projects: Names of the projects to install.
         missing: Install all projects that are configured, but not installed.
+        offline: Install using artefacts already present in the project directory
+            instead of downloading, updating the state accordingly. Useful to
+            rebuild state for projects that have none.
 
     Returns:
         1 if nothing to install
@@ -712,6 +762,19 @@ def install(
     if not projects:
         logger.error("No projects to install.")
         return 1
+    if offline:
+        changed = False
+        for name in projects:
+            with logger.contextualize(project=name):
+                config = manager.configs.get(name)
+                if config is None:
+                    logger.error("Unknown project: {}", name)
+                    continue
+                if _install_offline_project(name, config, manager):
+                    changed = True
+        if changed:
+            save_state(manager.states)
+        return None
     return upgrade(projects)
 
 
