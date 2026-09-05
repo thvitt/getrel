@@ -1,8 +1,10 @@
+import csv
 import dataclasses
 import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -22,7 +24,14 @@ from rich.progress import DownloadColumn, Progress, track
 from rich.table import Column, Table
 from rich.text import Text
 
-from getrel.actions import BinAction, Project, ProjectState, Settings, write_schemas
+from getrel.actions import (
+    DEFAULT_TAG,
+    BinAction,
+    Project,
+    ProjectState,
+    Settings,
+    write_schemas,
+)
 from getrel.add import PreferenceScores, identifying_pattern
 from getrel.add import add as add_
 from getrel.config import (
@@ -732,6 +741,20 @@ def _install_offline_project(
     return True
 
 
+def _select_by_tag(
+    manager: GithubProjectManager, tag: list[str] | None, all_: bool
+) -> list[str]:
+    """Selects configured project names by tag, or all of them if all_ is set."""
+    if all_:
+        return list(manager.configs)
+    wanted_tags = set(tag) if tag else {DEFAULT_TAG}
+    return [
+        name
+        for name, config in manager.configs.items()
+        if wanted_tags & set(config.effective_tags)
+    ]
+
+
 @app.command(group=management)
 def install(
     projects: list[str] | None = None,
@@ -739,26 +762,47 @@ def install(
     *,
     missing: Annotated[bool, Parameter(alias="-m", negative=())] = False,
     offline: Annotated[bool, Parameter(alias="-o", negative=())] = False,
+    tag: Annotated[list[str] | None, Parameter(consume_multiple=True)] = None,
+    all_: Annotated[bool, Parameter(name="--all", negative=())] = False,
 ):
     """
     Install the given (or all missing) projects.
 
+    If no project names are given, the projects to consider are selected by
+    tag: --tag selects projects having at least one of the given tags, --all
+    selects all configured projects, and if neither is given, only projects
+    without any explicit tag (i.e. tagged 'default') are considered.
+
     Args:
         projects: Names of the projects to install.
-        missing: Install all projects that are configured, but not installed.
+        missing: Only consider projects that are configured, but not installed.
         offline: Install using artefacts already present in the project directory
             instead of downloading, updating the state accordingly. Useful to
             rebuild state for projects that have none.
+        tag: Only consider projects having at least one of the given tags.
+        all_: Consider all configured projects, regardless of tags.
 
     Returns:
         1 if nothing to install
     """
-    projects = projects or []
+    if tag and all_:
+        logger.error("--tag and --all cannot be used together.")
+        return 1
     manager = GithubProjectManager()
-    if missing:
-        projects.extend(
-            project for project in manager.configs if not manager.installed(project)
-        )
+    if not projects:
+        projects = _select_by_tag(manager, tag, all_)
+        if missing:
+            projects = [name for name in projects if not manager.installed(name)]
+    else:
+        projects = list(projects)
+        if tag or all_:
+            logger.warning(
+                "Ignoring --tag/--all because explicit project names were given."
+            )
+        if missing:
+            projects.extend(
+                name for name in manager.configs if not manager.installed(name)
+            )
     if not projects:
         logger.error("No projects to install.")
         return 1
@@ -833,12 +877,85 @@ def save_schemas():
 
 
 @app.command(group=management)
-def add(url: str, prerelease: Annotated[bool, Parameter(alias="-p")] = False):
+def add(
+    url: str,
+    prerelease: Annotated[bool, Parameter(alias="-p")] = False,
+    tag: Annotated[list[str] | None, Parameter(consume_multiple=True)] = None,
+):
     """
     Add a new project. Work in progress, you might want to use edit afterwards.
 
     Args:
         url: URL to the project
         prerelease: if true, consider prereleases
+        tag: Tag(s) to assign to the project. Projects without any tag are
+            considered tagged 'default'.
     """
-    add_(url, prerelease=prerelease)
+    add_(url, prerelease=prerelease, tags=tag)
+
+
+@app.command(group=management, name="tag")
+def tag_projects(projects: list[str] | None = None, /):
+    """
+    Mass-edit the tags of projects using a TSV file opened in your editor.
+
+    Opens a temporary tab-separated file listing each project and its
+    comma-separated tags in $EDITOR. Saving and closing the editor applies the
+    changes to the projects' configuration; leaving a project's tags column
+    empty means it has no explicit tag (i.e. it is tagged 'default').
+
+    Args:
+        projects: Only list the given projects. If omitted, all configured
+            projects are listed.
+    """
+    configs = {p.name: p for p in load_project_configs()}
+    names = projects or sorted(configs)
+    unknown = [name for name in names if name not in configs]
+    for name in unknown:
+        logger.error("Unknown project: {}", name)
+    names = [name for name in names if name in configs]
+    if not names:
+        logger.error("No projects to tag.")
+        return 1
+
+    fd, tmp_name = tempfile.mkstemp(prefix="getrel-tags-", suffix=".tsv")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    with tmp_path.open("w", newline="") as tmp:
+        writer = csv.writer(tmp, delimiter="\t")
+        writer.writerow(["name", "tags"])
+        for name in names:
+            writer.writerow([name, ", ".join(configs[name].tags)])
+
+    try:
+        editor = os.environ.get("EDITOR", "vi") or "vi"
+        subprocess.call([*shlex.split(editor), str(tmp_path)])
+        with tmp_path.open(newline="") as f:
+            rows = list(csv.reader(f, delimiter="\t"))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    if not rows or rows[0][:2] != ["name", "tags"]:
+        logger.error("Tag file header is missing or malformed, aborting.")
+        return 1
+
+    changed = 0
+    for row in rows[1:]:
+        if not row or not row[0].strip():
+            continue
+        name = row[0].strip()
+        if name not in configs:
+            logger.warning("Ignoring unknown project in tag file: {}", name)
+            continue
+        raw_tags = row[1] if len(row) > 1 else ""
+        new_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        config = configs[name]
+        if config.tags != new_tags:
+            config.tags = new_tags
+            config.save()
+            changed += 1
+            logger.info("{}: tags set to {}", name, new_tags or "(none, default)")
+
+    if not changed:
+        logger.info("No tags changed.")
+    return None

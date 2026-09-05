@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 
 DATA_DIR = Path(xdg.BaseDirectory.xdg_data_home, "getrel")
 
+DEFAULT_TAG = "default"
+"""Virtual tag used for projects that have no explicit tag."""
+
 # During a single install run, source patterns should only match files that
 # belong to that run (freshly downloaded assets and files created by earlier
 # actions in the same run) rather than every file that happens to be lying
@@ -501,6 +504,12 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
     uninstall: list[Action] = []
     download: list[str] = []
     prerelease: bool = False
+    tags: list[str] = []
+
+    @property
+    def effective_tags(self) -> list[str]:
+        """The project's tags, or [DEFAULT_TAG] if it has none."""
+        return self.tags or [DEFAULT_TAG]
 
     @classmethod
     def load(cls, src: str | Path) -> Self:

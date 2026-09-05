@@ -234,12 +234,18 @@ def mask_architecture(name: str, settings: Settings) -> str:
     return name
 
 
-def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
+def add(
+    url: str,
+    auto_level: Literal[0, 1, 2] = 0,
+    prerelease: bool = False,
+    tags: list[str] | None = None,
+):
     scorer = PreferenceScores.load()
     logger.debug("Asset scorer: {}", scorer)
     settings = Settings.load()
     manager = GithubProjectManager()
     project, state, assets_ = manager.prepare_project(url, prerelease=prerelease)
+    project.tags = list(tags) if tags else []
     with logger.contextualize(project=project.name):
         logger.debug("Project: {}, State: {}, Assets: {}", project, state, assets_)
         assets = ScoredAsset.score_assets(assets_, scorer, settings)
@@ -338,9 +344,7 @@ def add(url: str, auto_level: Literal[0, 1, 2] = 0, prerelease: bool = False):
                             project.install.append(action)
                             action_created_files = []  # FIXME should pass list of all files
                             action(action_created_files)
-                            logger.debug(
-                                "… created files: {}", action_created_files
-                            )
+                            logger.debug("… created files: {}", action_created_files)
 
                             if state.installed_files is None:
                                 state.installed_files = []
