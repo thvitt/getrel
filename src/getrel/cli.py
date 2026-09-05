@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import webbrowser
 from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -518,6 +519,13 @@ def info(project: str, /):
     get_console().print(md)
 
 
+@app.command(group=infos)
+def browse(project: str, /):
+    """Open the project's page in the default web browser."""
+    config = load_project_config(project)
+    webbrowser.open(config.url)
+
+
 def capture(*objects, **kwargs) -> str:
     console = Console(force_terminal=False, force_interactive=False, record=True)
     console.begin_capture()
@@ -730,8 +738,12 @@ def _install_offline_project(
         return False
     assets = _select_latest_assets(project_dir, config)
     if not assets:
+        present = sorted(f.name for f in project_dir.iterdir() if f.is_file())
         logger.warning(
-            "{}: no matching artefacts found in {}, skipping", name, project_dir
+            "{}: no matching artefacts found in {}, skipping. Files present: {}",
+            name,
+            project_dir,
+            ", ".join(present) or "(none)",
         )
         return False
     state.installed_files = [a.relative_to(project_dir) for a in assets]
