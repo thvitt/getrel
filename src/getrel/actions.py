@@ -323,7 +323,7 @@ class AbstractLinkAction(BaseAction):
                 else:
                     level = (
                         "INFO"
-                        if final_path.readlink()
+                        if link_path.readlink()
                         .resolve()
                         .is_relative_to(Path().absolute())
                         else "WARNING"
