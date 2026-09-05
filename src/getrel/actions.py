@@ -298,6 +298,25 @@ class AbstractLinkAction(BaseAction):
 
         return link_dir
 
+    @staticmethod
+    def _has_symlinked_ancestor(path: Path) -> bool:
+        """
+        Returns True if any ancestor directory of path (i.e. excluding path itself) is a symlink.
+
+        A relative symlink is resolved starting at the *real* location of its parent
+        directory, not its syntactic one. If some ancestor of that parent directory is
+        itself a symlink, the real and syntactic locations differ, and a relative
+        target computed from the syntactic path may end up pointing at the wrong place.
+        """
+        current = path.absolute().parent
+        while True:
+            if current.is_symlink():
+                return True
+            parent = current.parent
+            if parent == current:
+                return False
+            current = parent
+
     def _create_link(self, source: Path, target: Path, project_files: list[Path]):
         """
         Creates a single link to source.
@@ -313,7 +332,7 @@ class AbstractLinkAction(BaseAction):
         else:
             link_dir = target.parent
             link_path = target
-        if self.absolute:
+        if self.absolute or self._has_symlinked_ancestor(link_path):
             final_path = source.absolute()
         else:
             final_path = Path(os.path.relpath(source, link_path.parent))
@@ -448,7 +467,7 @@ class ScriptAction(BaseAction):
                 args,
                 stdout=path_recorder(
                     project_files,
-                    fallback=_log_output(prefix=args[0]),
+                    fallback=_log_output(prefix=args[0], level="INFO"),
                 ),
             )
         elif self.script is not None and self.script.strip().startswith("#!"):
@@ -460,7 +479,9 @@ class ScriptAction(BaseAction):
                 cmd,
                 stdout=path_recorder(
                     project_files,
-                    fallback=_log_output(prefix=shlex.split(self.script)[0]),
+                    fallback=_log_output(
+                        prefix=shlex.split(self.script)[0], level="INFO"
+                    ),
                 ),
             )
 
@@ -476,7 +497,7 @@ class ScriptAction(BaseAction):
                 [fspath(script_path)],
                 stdout=path_recorder(
                     project_files,
-                    fallback=_log_output(prefix=script_file.name),
+                    fallback=_log_output(prefix=script_file.name, level="INFO"),
                 ),
             )
 

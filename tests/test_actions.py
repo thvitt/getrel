@@ -9,6 +9,7 @@ import getrel.actions
 from getrel.actions import (
     BaseAction,
     BinAction,
+    LinkAction,
     Project,
     ProjectState,
     ScriptAction,
@@ -90,6 +91,55 @@ def test_do_install_ignores_leftover_files_from_previous_run(tmp_path, monkeypat
 
     assert (project_dir / "new.txt").exists()
     assert not (project_dir / "old.txt").exists()
+
+
+def test_link_relative(tmp_path: Path):
+    files = []
+    with WorkingDirectory(tmp_path):
+        source_dir = Path("pkg")
+        source_dir.mkdir()
+        source = source_dir / "tool"
+        source.write_text("binary")
+        link_dir = Path("bin")
+        link_dir.mkdir()
+
+        action = LinkAction(source=str(source), link=str(link_dir) + "/")
+        action(files)
+
+    link_path = tmp_path / "bin" / "tool"
+    assert link_path.is_symlink()
+    assert not link_path.readlink().is_absolute()
+    assert link_path.resolve() == (tmp_path / "pkg" / "tool").resolve()
+    assert Path("bin/tool") in files
+
+
+def test_link_avoids_relative_path_through_symlinked_ancestor(tmp_path: Path):
+    """
+    If some ancestor of the link's directory is itself a symlink, a relative link
+    target computed from the syntactic path can end up pointing at the wrong place,
+    because the OS resolves a relative symlink target starting at the *real*
+    location of its parent directory. In that case, the action must fall back to
+    an absolute link.
+    """
+    files = []
+    with WorkingDirectory(tmp_path):
+        source_dir = Path("pkg")
+        source_dir.mkdir()
+        source = source_dir / "tool"
+        source.write_text("binary")
+
+        real_home = Path("real_home")
+        (real_home / "completion").mkdir(parents=True)
+        Path("home").symlink_to(real_home)
+
+        action = LinkAction(source=str(source), link="home/completion/")
+        action(files)
+
+    link_path = tmp_path / "home" / "completion" / "tool"
+    assert link_path.is_symlink()
+    assert link_path.readlink().is_absolute()
+    assert link_path.resolve() == (tmp_path / "pkg" / "tool").resolve()
+    assert Path("home/completion/tool") in files
 
 
 def test_script_cmd(tmp_path: Path):
