@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import tarfile
 from abc import abstractmethod
+from contextvars import ContextVar
 from datetime import datetime
 from fnmatch import fnmatch
 from functools import lru_cache
@@ -34,6 +35,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Container, Iterable
 
 DATA_DIR = Path(xdg.BaseDirectory.xdg_data_home, "getrel")
+
+# During a single install run, source patterns should only match files that
+# belong to that run (freshly downloaded assets and files created by earlier
+# actions in the same run) rather than every file that happens to be lying
+# around in the project directory, e.g. leftovers from a previous version.
+# See do_install() and BaseAction.expand_source().
+_install_scope: ContextVar[list[Path] | None] = ContextVar(
+    "_install_scope", default=None
+)
 
 
 def _log_output(
@@ -98,9 +108,16 @@ class BaseAction(
         Expands the action’s source field either as glob pattern of the current directory.
         If a list of candidates is given, the list is filtered against the pattern instead.
 
+        If no candidates are given and an install run is currently in progress (see
+        do_install()), the run's known files are used as candidates instead of falling
+        back to a directory glob, so that leftover files from previous versions are
+        not matched.
+
         Args:
             candidates: Optional list of paths or strings to filter against the pattern.
         """  # noqa: RUF002
+        if candidates is None:
+            candidates = _install_scope.get()
         result = []
         for path in Settings.load().expand(self.source):
             if candidates is None:
@@ -112,9 +129,24 @@ class BaseAction(
                     logger.debug(" ... rel: {} ~> {}", path, result)
             else:
                 result.extend(
-                    cand for cand in candidates if fnmatch(str(cand), str(path))
+                    cand for cand in candidates if self._matches_pattern(cand, path)
                 )
         return unique(result)
+
+    @staticmethod
+    def _matches_pattern(candidate: Path | str, pattern: Path) -> bool:
+        """Matches a candidate path against pattern, also trying it relative to cwd."""
+        pattern_str = str(pattern)
+        if fnmatch(str(candidate), pattern_str):
+            return True
+        candidate_path = Path(candidate)
+        if not candidate_path.is_absolute():
+            return False
+        try:
+            relative = candidate_path.relative_to(Path.cwd())
+        except ValueError:
+            return False
+        return fnmatch(str(relative), pattern_str)
 
     @property
     def sources(self) -> list[Path]:
@@ -528,34 +560,51 @@ class Project(msgspec.Struct, omit_defaults=True, kw_only=True, dict=True):
                 result.append(f"* {action}")  # noqa: PERF401
         return "\n".join(result)
 
-    def do_install(self, state: ProjectState):
+    def do_install(self, state: ProjectState, run_files: Iterable[Path] | None = None):
         """
         Run all configured install actions.
+
+        Args:
+            run_files: Files known to belong to this install run, typically the
+                freshly downloaded assets. Install action source patterns will only
+                match these and files created by earlier actions of the same run,
+                so leftover files from previously installed versions that are still
+                sitting in the project directory are not matched. Defaults to the
+                project's currently known installed files.
         """
+        scope = list(state.installed_files if run_files is None else run_files)
         with (
             WorkingDirectory(state.project_dir),
             logger.contextualize(project=self.name),
         ):
-            install_errors = []
-            for action in self.install:
-                with logger.contextualize(
-                    action=_actiontag(action.__class__.__name__), task=str(action)
-                ):
-                    try:
-                        action(state.installed_files)
-                    except Exception as e:
-                        logger.opt(exception=True).debug(
-                            "{}: {}: {}",
-                            self.name,
-                            action,
-                            e,
-                        )
-                        install_errors.append(e)
-            if install_errors:
-                raise ExceptionGroup(
-                    f"{len(install_errors)}/{len(self.install)} actions failed installing {self.name}",
-                    install_errors,
-                )
+            token = _install_scope.set(scope)
+            try:
+                install_errors = []
+                for action in self.install:
+                    with logger.contextualize(
+                        action=_actiontag(action.__class__.__name__), task=str(action)
+                    ):
+                        try:
+                            action(scope)
+                        except Exception as e:
+                            logger.opt(exception=True).debug(
+                                "{}: {}: {}",
+                                self.name,
+                                action,
+                                e,
+                            )
+                            install_errors.append(e)
+                        finally:
+                            for file in scope:
+                                if file not in state.installed_files:
+                                    state.installed_files.append(file)
+                if install_errors:
+                    raise ExceptionGroup(
+                        f"{len(install_errors)}/{len(self.install)} actions failed installing {self.name}",
+                        install_errors,
+                    )
+            finally:
+                _install_scope.reset(token)
 
     def is_asset(self, file: str | Path) -> bool:
         """

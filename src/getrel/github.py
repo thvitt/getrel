@@ -1,5 +1,5 @@
 import os
-from collections.abc import Container, Iterable, Sequence
+from collections.abc import Collection, Container, Iterable, Sequence
 from datetime import datetime
 from fnmatch import fnmatch
 from itertools import count
@@ -399,10 +399,10 @@ class GithubProjectManager:
         project.project_file.unlink(missing_ok=True)
         del self.configs[project.name]
 
-    def install_or_update(self, project: GithubProject, assets: Container[Path]):
+    def install_or_update(self, project: GithubProject, assets: Collection[Path]):
         if self.installed(project):
             self.uninstall(project, keep=assets)
-        project.do_install(self.states[project.name])
+        project.do_install(self.states[project.name], run_files=assets)
 
     def download(
         self,

@@ -71,6 +71,12 @@ actions in the project configuration. Common to all actions:
   downloaded.
 - Each action will be passed a list of files that are already installed for the
   project. It should add all files it creates and remove all files it deletes.
+- `source` patterns are only matched against the files that belong to the
+  current install run (the freshly downloaded assets and whatever earlier
+  actions of the same run have created), not against every file that happens
+  to be lying around in the project directory. This prevents an update from
+  accidentally picking up a leftover asset from a previously installed
+  version that matches the same pattern.
 
 ### unpack
 

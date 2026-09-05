@@ -62,6 +62,36 @@ def test_unpack(resources: Path, tmp_path: Path, archive: str):
     assert expected in files
 
 
+def test_do_install_ignores_leftover_files_from_previous_run(tmp_path, monkeypatch):
+    """A source pattern should only match files known to the current install run,
+    not leftover assets from a previously installed version sitting in the
+    project directory (see BaseAction.expand_source, Project.do_install)."""
+    monkeypatch.setattr(getrel.actions, "DATA_DIR", tmp_path)
+
+    project_name = "myproj"
+    project_dir = tmp_path / project_name
+    project_dir.mkdir(parents=True)
+
+    def make_zip(path: Path, member: str, content: str):
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(member, content)
+
+    make_zip(project_dir / "myproj-1.0.zip", "old.txt", "old")
+    make_zip(project_dir / "myproj-2.0.zip", "new.txt", "new")
+
+    project = Project(
+        name=project_name,
+        download=["myproj-*.zip"],
+        install=[UnpackAction(source="myproj-*.zip")],
+    )
+    state = ProjectState(name=project_name, installed_files=[Path("myproj-1.0.zip")])
+
+    project.do_install(state, run_files=[Path("myproj-2.0.zip")])
+
+    assert (project_dir / "new.txt").exists()
+    assert not (project_dir / "old.txt").exists()
+
+
 def test_script_cmd(tmp_path: Path):
     files = []
     with WorkingDirectory(tmp_path):
