@@ -30,7 +30,11 @@ from .actions import (
 
 
 def _make_action(action: str, source: str, arg: str | None = None) -> Action:
+    if source == "postinstall":
+        action, arg = source, action
     match action:
+        case "postinstall":
+            return ScriptAction(script=arg)
         case "unpack":
             return UnpackAction(source=source, destination=arg)
         case "link":
@@ -42,8 +46,6 @@ def _make_action(action: str, source: str, arg: str | None = None) -> Action:
                 return BinAction(source=source, link=arg)
             else:
                 return BinAction(source=source, bin=arg)
-        case "postinstall":
-            return ScriptAction(script=arg)
         case _:
             raise ValueError(f"Unknown action {action} for source {source}")
 
